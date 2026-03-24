@@ -230,7 +230,7 @@ const ClinicDashboard: React.FC = () => {
           <div className="bg-blue-500 p-2 rounded-lg">
             <ShieldPlus size={24} className="text-white" />
           </div>
-          <h1 className="text-xl font-bold tracking-wide hidden sm:block">ONG SANTE PLUS</h1>
+          <h1 className="text-xl font-bold tracking-wide hidden sm:block">Clinique Ong Notre Grenier </h1>
         </div>
         
         <div className="flex items-center gap-3 bg-slate-800 p-1.5 rounded-xl border border-slate-700">
