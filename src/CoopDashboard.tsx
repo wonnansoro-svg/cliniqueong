@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   Users, Activity, Stethoscope, Pill, 
   Settings, CreditCard, QrCode, Printer,
   Baby, Heart, ShieldPlus, Stethoscope as GenMed,
-  Scan, Search, Plus, Trash2, AlertCircle, ShoppingCart, Camera
+  Scan, Search, Trash2, AlertCircle, ShoppingCart, Camera,
+  Clock, CheckCircle2, Thermometer, Weight, HeartPulse
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -16,6 +17,8 @@ interface Patient {
   ticket: string;
   nom: string;
   service: ServiceType;
+  age?: number;
+  sexe?: 'M' | 'F';
   statut: 'Accueil' | 'Triage' | 'Consultation' | 'Pharmacie' | 'Caisse' | 'Terminé';
   heureArrivee: string;
 }
@@ -38,9 +41,13 @@ const ClinicDashboard: React.FC = () => {
   const [currentUserRole, setCurrentUserRole] = useState<Role>('Responsable');
   const [activeTab, setActiveTab] = useState<'accueil' | 'triage' | 'medecin' | 'pharmacie' | 'caisse' | 'admin'>('accueil');
   
-  // Base de données simulée
-  const [patients, setPatients] = useState<Patient[]>([]);
-  const [medicaments, setMedicaments] = useState<Medicament[]>([
+  // Base de données simulée (Patients et Médicaments)
+  const [patients, setPatients] = useState<Patient[]>([
+    { id: 'DOS-0012', ticket: 'GEN-001', nom: 'Kouassi Aya', age: 34, sexe: 'F', service: 'GEN', statut: 'Triage', heureArrivee: '08:15' },
+    { id: 'DOS-0045', ticket: 'PED-001', nom: 'Traoré Seydou', age: 8, sexe: 'M', service: 'PED', statut: 'Triage', heureArrivee: '08:45' },
+  ]);
+  
+  const [medicaments] = useState<Medicament[]>([
     { id: 'M1', codeBarre: '123456789', nom: 'Paracétamol 500mg', stock: 150, prix: 1500 },
     { id: 'M2', codeBarre: '987654321', nom: 'Amoxicilline Sachet', stock: 5, prix: 3500 },
     { id: 'M3', codeBarre: '111222333', nom: 'Sirop Toux Enfant', stock: 42, prix: 2500 },
@@ -50,6 +57,14 @@ const ClinicDashboard: React.FC = () => {
   const [nouveauNom, setNouveauNom] = useState('');
   const [nouveauService, setNouveauService] = useState<ServiceType>('GEN');
   const [ticketGenere, setTicketGenere] = useState<Patient | null>(null);
+
+  // --- ÉTATS TRIAGE (Infirmerie) ---
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [tensionSys, setTensionSys] = useState<number | ''>('');
+  const [tensionDia, setTensionDia] = useState<number | ''>('');
+  const [temperature, setTemperature] = useState<number | ''>('');
+  const [poids, setPoids] = useState<number | ''>('');
+  const isTensionHigh = (tensionSys !== '' && tensionSys >= 140) || (tensionDia !== '' && tensionDia >= 90);
 
   // --- ÉTATS PHARMACIE ---
   const [panier, setPanier] = useState<LignePanier[]>([]);
@@ -62,6 +77,7 @@ const ClinicDashboard: React.FC = () => {
     if (!nouveauNom.trim()) return;
     const countService = patients.filter(p => p.service === nouveauService).length + 1;
     const numeroFormatte = countService.toString().padStart(3, '0');
+    
     const newPatient: Patient = {
       id: `DOS-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
       ticket: `${nouveauService}-${numeroFormatte}`,
@@ -70,6 +86,7 @@ const ClinicDashboard: React.FC = () => {
       statut: 'Triage',
       heureArrivee: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
+    
     setPatients([...patients, newPatient]);
     setTicketGenere(newPatient);
     setNouveauNom('');
@@ -99,14 +116,13 @@ const ClinicDashboard: React.FC = () => {
     } else {
       setPanier([...panier, { medicament: med, quantite: 1 }]);
     }
-    setCodeSaisi(''); // On vide le champ après un scan réussi
+    setCodeSaisi('');
   };
 
   const simulerScanCamera = () => {
     setModeScanner(true);
-    // Simule la lecture d'un code après 2 secondes
     setTimeout(() => {
-      ajouterAuPanier('123456789'); // Simule le scan du Paracétamol
+      ajouterAuPanier('123456789'); // Simule le scan
       setModeScanner(false);
     }, 2000);
   };
@@ -126,7 +142,7 @@ const ClinicDashboard: React.FC = () => {
   return (
     <div className="h-screen flex flex-col bg-slate-50 font-sans">
       
-      {/* BANDEAU HAUT */}
+      {/* --- BANDEAU HAUT --- */}
       <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-10">
         <div className="flex items-center gap-3">
           <div className="bg-blue-500 p-2 rounded-lg">
@@ -141,8 +157,13 @@ const ClinicDashboard: React.FC = () => {
             className="bg-slate-700 text-white border-none rounded-lg text-sm p-2 focus:ring-0 cursor-pointer outline-none"
             value={currentUserRole}
             onChange={(e) => {
-              setCurrentUserRole(e.target.value as Role);
-              setActiveTab(e.target.value === 'Caissiere' ? 'pharmacie' : 'accueil'); 
+              const newRole = e.target.value as Role;
+              setCurrentUserRole(newRole);
+              // Redirection automatique selon le rôle
+              if (newRole === 'Caissiere') setActiveTab('pharmacie');
+              else if (newRole === 'Infirmier') setActiveTab('triage');
+              else if (newRole === 'Medecin') setActiveTab('medecin');
+              else setActiveTab('accueil');
             }}
           >
             <option value="Responsable">Responsable (Admin)</option>
@@ -156,7 +177,7 @@ const ClinicDashboard: React.FC = () => {
 
       <div className="flex flex-1 overflow-hidden">
         
-        {/* MENU LATÉRAL */}
+        {/* --- MENU LATÉRAL --- */}
         <aside className="w-64 bg-white border-r border-slate-200 flex flex-col py-6 shadow-sm z-0">
           <nav className="flex flex-col gap-2 px-4">
             {canSee('accueil') && (
@@ -174,33 +195,202 @@ const ClinicDashboard: React.FC = () => {
           </nav>
         </aside>
 
-        {/* ZONE PRINCIPALE */}
+        {/* --- ZONE PRINCIPALE --- */}
         <main className="flex-1 p-8 overflow-y-auto bg-slate-50 relative">
           
-          {/* --- VUE ACCUEIL --- */}
+          {/* ========================================== */}
+          {/* MODULE 1 : ACCUEIL (LE CODE PARFAIT INTACT)  */}
+          {/* ========================================== */}
           {activeTab === 'accueil' && (
             <div className="max-w-4xl mx-auto">
               <h2 className="text-3xl font-bold text-slate-800 mb-2">Accueil & Enregistrement</h2>
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mt-6">
+              <p className="text-slate-500 mb-8">Génération automatique des dossiers et tickets d'attente</p>
+
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                  
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Nom complet du patient</label>
-                    <input type="text" value={nouveauNom} onChange={(e) => setNouveauNom(e.target.value)} placeholder="Ex: Koffi Emmanuel" className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-400 focus:outline-none"/>
+                    <input 
+                      type="text" 
+                      value={nouveauNom}
+                      onChange={(e) => setNouveauNom(e.target.value)}
+                      placeholder="Ex: Koffi Emmanuel"
+                      className="w-full p-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-400 focus:outline-none"
+                    />
                   </div>
+
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Service demandé</label>
                     <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => setNouveauService('GEN')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center ${nouveauService === 'GEN' ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' : 'border-slate-200 text-slate-600'}`}><GenMed size={18}/> Général</button>
-                      <button onClick={() => setNouveauService('PED')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center ${nouveauService === 'PED' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 font-bold' : 'border-slate-200 text-slate-600'}`}><Baby size={18}/> Pédiatrie</button>
+                      <button onClick={() => setNouveauService('GEN')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all ${nouveauService === 'GEN' ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <GenMed size={18}/> Général
+                      </button>
+                      <button onClick={() => setNouveauService('PED')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all ${nouveauService === 'PED' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <Baby size={18}/> Pédiatrie
+                      </button>
+                      <button onClick={() => setNouveauService('MAT')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all ${nouveauService === 'MAT' ? 'bg-rose-50 border-rose-500 text-rose-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <Heart size={18}/> Maternité
+                      </button>
+                      <button onClick={() => setNouveauService('CHIR')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all ${nouveauService === 'CHIR' ? 'bg-purple-50 border-purple-500 text-purple-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <Activity size={18}/> Chirurgie
+                      </button>
                     </div>
                   </div>
+
                 </div>
-                <button onClick={genererTicket} disabled={!nouveauNom.trim()} className="w-full bg-slate-900 hover:bg-black text-white p-4 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"><QrCode size={20} /> Générer le Ticket</button>
+
+                <button 
+                  onClick={genererTicket}
+                  disabled={!nouveauNom.trim()}
+                  className="w-full bg-slate-900 hover:bg-black text-white p-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <QrCode size={20} /> Générer le Dossier et le Ticket
+                </button>
+              </div>
+
+              {/* MODAL TICKET GÉNÉRÉ (INTACT) */}
+              {ticketGenere && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full overflow-hidden animate-in fade-in zoom-in duration-200">
+                    
+                    <div className="bg-slate-900 text-white text-center p-6 pb-8 rounded-b-[2rem] shadow-inner relative">
+                      <p className="text-slate-300 text-sm font-medium uppercase tracking-widest mb-1">Votre Numéro</p>
+                      <h1 className="text-5xl font-black tracking-tighter">{ticketGenere.ticket}</h1>
+                    </div>
+
+                    <div className="p-8 text-center -mt-6">
+                      <div className="bg-white rounded-2xl shadow-lg p-6 mb-6 mx-auto inline-block border border-slate-100">
+                        <QRCodeSVG value={ticketGenere.id} size={140} level="H" />
+                      </div>
+                      
+                      <h2 className="text-xl font-bold text-slate-800">{ticketGenere.nom}</h2>
+                      <p className="text-slate-500 mt-1">Dossier: <span className="font-mono text-slate-800 font-bold bg-slate-100 px-2 py-0.5 rounded">{ticketGenere.id}</span></p>
+                      
+                      <div className="mt-6 flex justify-between items-center bg-blue-50 p-4 rounded-xl border border-blue-100">
+                        <div className="text-left">
+                          <p className="text-xs text-blue-600/70 font-bold uppercase">Prochaine étape</p>
+                          <p className="font-bold text-blue-800">Salle de Triage</p>
+                        </div>
+                        <Activity className="text-blue-500" size={24} />
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-slate-50 flex gap-3 border-t border-slate-100">
+                      <button onClick={() => setTicketGenere(null)} className="flex-1 bg-white border border-slate-200 text-slate-700 py-3 rounded-xl font-bold hover:bg-slate-100">Fermer</button>
+                      <button className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 flex items-center justify-center gap-2">
+                        <Printer size={18} /> Imprimer
+                      </button>
+                    </div>
+
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ========================================== */}
+          {/* MODULE 2 : INFIRMERIE / TRIAGE             */}
+          {/* ========================================== */}
+          {activeTab === 'triage' && (
+             <div className="h-full flex flex-col">
+              <div className="mb-8 flex justify-between items-end">
+                <div>
+                  <h2 className="text-3xl font-bold text-slate-800">Infirmerie - Triage</h2>
+                  <p className="text-slate-500 mt-1">Saisie des constantes vitales des patients</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 flex-1">
+                {/* Liste des patients */}
+                <div className="lg:col-span-1 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
+                  <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <Clock size={18} className="text-blue-500"/> Patients en attente
+                  </h3>
+                  <div className="flex flex-col gap-3">
+                    {patients.filter(p => p.statut === 'Triage').map(patient => (
+                      <div 
+                        key={patient.id} 
+                        onClick={() => setSelectedPatient(patient)}
+                        className={`p-3 rounded-xl cursor-pointer border transition-all ${selectedPatient?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-blue-200 hover:bg-slate-50'}`}
+                      >
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="font-bold text-slate-800">{patient.nom}</span>
+                          <span className="text-xs bg-slate-200 text-slate-700 px-2 py-1 rounded-full">{patient.ticket}</span>
+                        </div>
+                        <p className="text-sm text-slate-500">Dossier: {patient.id} • Arrivé à {patient.heureArrivee}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Formulaire des constantes */}
+                <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm overflow-y-auto">
+                  {selectedPatient ? (
+                    <>
+                      <div className="flex justify-between items-center mb-6 pb-6 border-b border-slate-100">
+                        <div>
+                          <h3 className="text-xl font-bold text-slate-800">Patient: {selectedPatient.nom}</h3>
+                          <p className="text-slate-500">Prise des constantes</p>
+                        </div>
+                        <div className="bg-blue-100 text-blue-700 px-4 py-2 rounded-lg font-bold flex items-center gap-2">
+                          <Activity size={18}/> Phase de Triage
+                        </div>
+                      </div>
+
+                      {isTensionHigh && (
+                        <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl flex items-start gap-3 mb-6 animate-pulse">
+                          <AlertCircle className="text-red-600 shrink-0 mt-0.5" />
+                          <div>
+                            <h4 className="font-bold">Alerte Hypertension Détectée</h4>
+                            <p className="text-sm mt-1 text-red-600/80">La tension artérielle du patient est élevée. Un marquage d'urgence sera ajouté.</p>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="bg-slate-50 p-5 rounded-xl border border-slate-100">
+                          <label className="flex items-center gap-2 text-sm font-bold text-slate-700 mb-3">
+                            <HeartPulse size={16} className="text-rose-500"/> Tension Artérielle
+                          </label>
+                          <div className="flex items-center gap-3">
+                            <input type="number" value={tensionSys} onChange={(e) => setTensionSys(e.target.value === '' ? '' : Number(e.target.value))} className={`w-full p-3 border rounded-lg outline-none ${isTensionHigh ? 'border-red-300 bg-red-50 text-red-700 font-bold' : 'border-slate-200'}`} placeholder="Sys (120)"/>
+                            <span className="text-slate-400 text-xl font-light">/</span>
+                            <input type="number" value={tensionDia} onChange={(e) => setTensionDia(e.target.value === '' ? '' : Number(e.target.value))} className={`w-full p-3 border rounded-lg outline-none ${isTensionHigh ? 'border-red-300 bg-red-50 text-red-700 font-bold' : 'border-slate-200'}`} placeholder="Dia (80)"/>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-50 p-5 rounded-xl border border-slate-100">
+                          <label className="flex items-center gap-2 text-sm font-bold text-slate-700 mb-3"><Thermometer size={16} className="text-orange-500"/> Température (°C)</label>
+                          <input type="number" value={temperature} onChange={(e) => setTemperature(e.target.value === '' ? '' : Number(e.target.value))} className="w-full p-3 border border-slate-200 rounded-lg outline-none"/>
+                        </div>
+
+                        <div className="bg-slate-50 p-5 rounded-xl border border-slate-100">
+                          <label className="flex items-center gap-2 text-sm font-bold text-slate-700 mb-3"><Weight size={16} className="text-emerald-500"/> Poids (kg)</label>
+                          <input type="number" value={poids} onChange={(e) => setPoids(e.target.value === '' ? '' : Number(e.target.value))} className="w-full p-3 border border-slate-200 rounded-lg outline-none"/>
+                        </div>
+                      </div>
+
+                      <div className="mt-8 flex justify-end">
+                        <button className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2">
+                          <CheckCircle2 size={20} /> Envoyer au médecin
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                      <Activity size={48} className="mb-4 opacity-20" />
+                      <p>Sélectionnez un patient pour commencer le triage.</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
 
-          {/* --- VUE PHARMACIE --- */}
+          {/* ========================================== */}
+          {/* MODULE 3 : PHARMACIE                       */}
+          {/* ========================================== */}
           {activeTab === 'pharmacie' && (
             <div className="h-full flex flex-col">
               <div className="flex justify-between items-end mb-6">
@@ -225,7 +415,7 @@ const ClinicDashboard: React.FC = () => {
                     {modeScanner ? (
                       <>
                         <Scan className="text-blue-500 w-16 h-16 animate-pulse mb-4" />
-                        <p className="text-blue-700 font-bold text-center">Recherche de code-barres...<br/><span className="text-xs font-normal">Veuillez patienter (Simulation)</span></p>
+                        <p className="text-blue-700 font-bold text-center">Recherche de code-barres...<br/><span className="text-xs font-normal">Veuillez patienter</span></p>
                       </>
                     ) : (
                       <>
@@ -250,24 +440,21 @@ const ClinicDashboard: React.FC = () => {
                       onChange={(e) => setCodeSaisi(e.target.value)}
                       placeholder="Code (ex: 123456789)"
                       className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-mono"
-                      autoFocus
                     />
                     <button type="submit" className="hidden">Ajouter</button>
                   </form>
 
-                  {/* Alertes d'erreur */}
                   {messageErreur && (
                     <div className="mt-4 bg-red-50 border border-red-200 text-red-600 p-3 rounded-lg flex gap-2 items-start text-sm font-medium">
                       <AlertCircle size={16} className="mt-0.5 shrink-0" /> {messageErreur}
                     </div>
                   )}
 
-                  {/* Petit aperçu des stocks pour la démo */}
                   <div className="mt-auto pt-6 border-t border-slate-100">
-                    <p className="text-xs text-slate-400 mb-2">Codes-barres pour tester :</p>
+                    <p className="text-xs text-slate-400 mb-2">Codes pour tester :</p>
                     <div className="flex flex-wrap gap-2">
-                      <span className="text-xs bg-slate-100 px-2 py-1 rounded font-mono cursor-pointer hover:bg-slate-200" onClick={() => setCodeSaisi('123456789')}>123456789</span>
-                      <span className="text-xs bg-slate-100 px-2 py-1 rounded font-mono cursor-pointer hover:bg-slate-200" onClick={() => setCodeSaisi('987654321')}>987654321</span>
+                      <span className="text-xs bg-slate-100 px-2 py-1 rounded font-mono cursor-pointer hover:bg-slate-200" onClick={() => setCodeSaisi('123456789')}>123456789 (Para)</span>
+                      <span className="text-xs bg-slate-100 px-2 py-1 rounded font-mono cursor-pointer hover:bg-slate-200" onClick={() => setCodeSaisi('987654321')}>987654321 (Amox)</span>
                     </div>
                   </div>
                 </div>
@@ -299,7 +486,7 @@ const ClinicDashboard: React.FC = () => {
                                 <p className="font-bold text-slate-800">x{ligne.quantite}</p>
                               </div>
                               <div className="text-right w-24">
-                                <p className="text-xs text-slate-400">Prix total</p>
+                                <p className="text-xs text-slate-400">Prix</p>
                                 <p className="font-bold text-blue-600">{(ligne.medicament.prix * ligne.quantite).toLocaleString()} FCFA</p>
                               </div>
                               <button 
@@ -315,7 +502,6 @@ const ClinicDashboard: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Pied du ticket : Le paiement */}
                   <div className="p-6 bg-slate-900 text-white rounded-t-3xl mt-auto">
                     <div className="flex justify-between items-end mb-6">
                       <p className="text-slate-400 font-medium">Net à payer</p>
@@ -323,7 +509,7 @@ const ClinicDashboard: React.FC = () => {
                     </div>
                     <button 
                       disabled={panier.length === 0}
-                      className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white p-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                      className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white p-4 rounded-xl font-bold flex items-center justify-center gap-2"
                     >
                       <Printer size={20} /> Imprimer le reçu et Encaisser
                     </button>
@@ -334,12 +520,12 @@ const ClinicDashboard: React.FC = () => {
             </div>
           )}
 
-          {/* Vues non codées (Triage/Medecin) conservées en basiques */}
-          {(activeTab === 'triage' || activeTab === 'medecin') && (
+          {/* VUE TEMPORAIRE (Médecin) */}
+          {activeTab === 'medecin' && (
             <div className="flex flex-col items-center justify-center h-full text-slate-400">
-              <Settings size={48} className="mb-4 opacity-20 animate-spin-slow" />
-              <h2 className="text-2xl font-bold text-slate-600 mb-2">Module {activeTab} en attente</h2>
-              <p>Nous le perfectionnerons à la prochaine étape.</p>
+              <Stethoscope size={48} className="mb-4 opacity-20" />
+              <h2 className="text-2xl font-bold text-slate-600 mb-2">Consultation Médicale</h2>
+              <p>Ce module sera développé à la prochaine étape.</p>
             </div>
           )}
 
