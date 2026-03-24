@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import { getFirestore, collection, addDoc, updateDoc, doc, setDoc, getDocs } from 'firebase/firestore';
 import { 
   Users, Activity, Stethoscope, Pill, 
   Settings, CreditCard, QrCode, Printer,
@@ -10,6 +13,29 @@ import {
   BarChart3, Package, TrendingUp, AlertTriangle, Plus,
   Lock, UserPlus, LogOut, Save, X, FileBarChart, Ban, Download, Menu
 } from 'lucide-react';
+
+// ============================================================================
+// CONFIGURATION FIREBASE (À remplacer par vos vraies clés Firebase)
+// ============================================================================
+// Your web app's Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyBmeFkD6L_U9eYymnO8rBGddUisJb0ysqA",
+  authDomain: "onggrenier.firebaseapp.com",
+  projectId: "onggrenier",
+  storageBucket: "onggrenier.firebasestorage.app",
+  messagingSenderId: "728693944134",
+  appId: "1:728693944134:web:e9d20c5ff05462a0cfff47"
+};
+
+
+let app: any, auth: any, db: any;
+try {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+} catch (error) {
+  console.warn("Firebase non initialisé. Fonctionnement en mode local (hors ligne).", error);
+}
 
 // --- TYPES DE DONNÉES ---
 type Role = 'Responsable' | 'Medecin' | 'Infirmier' | 'Caissiere' | 'Accueil';
@@ -44,9 +70,9 @@ const ClinicDashboard: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'accueil' | 'triage' | 'medecin' | 'pharmacie' | 'admin'>('accueil');
   const [adminSubTab, setAdminSubTab] = useState<'stats' | 'stock' | 'personnel' | 'rapports'>('stats');
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // NOUVEAU: Menu Responsive
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
-  // --- BASE DE DONNÉES SIMULÉE ---
+  // --- BASE DE DONNÉES HYBRIDE (Local + Firebase) ---
   const [patients, setPatients] = useState<Patient[]>([
     { id: 'DOS-0012', ticket: 'GEN-001', nom: 'Kouassi Aya', service: 'GEN', statut: 'Triage', heureArrivee: '08:15' },
     { id: 'DOS-0045', ticket: 'PED-001', nom: 'Traoré Seydou', service: 'PED', statut: 'Consultation', heureArrivee: '08:45', constantes: { sys: 145, dia: 95, temp: 38.2, poids: 25 } },
@@ -59,6 +85,10 @@ const ClinicDashboard: React.FC = () => {
   ]);
 
   const [historiqueVentes, setHistoriqueVentes] = useState<RapportVente[]>([]);
+
+  // --- ÉTATS RECHERCHES ---
+  const [searchMedecin, setSearchMedecin] = useState('');
+  const [searchAdminStock, setSearchAdminStock] = useState('');
 
   // --- ÉTATS SPÉCIFIQUES ---
   const [nouveauNom, setNouveauNom] = useState('');
@@ -83,44 +113,42 @@ const ClinicDashboard: React.FC = () => {
   const [recuApercu, setRecuApercu] = useState<RapportVente | null>(null); 
   const inputScanRef = useRef<HTMLInputElement>(null);
 
-  // NOUVEAU: États pour l'utilisation réelle de la caméra
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isAdminCameraActive, setIsAdminCameraActive] = useState(false);
 
+  // Focus automatique Scanner Pharmacie
   useEffect(() => {
     if (activeTab === 'pharmacie' && inputScanRef.current && !recuApercu && !isCameraActive) {
       inputScanRef.current.focus();
     }
   }, [activeTab, recuApercu, isCameraActive]);
 
-  // NOUVEAU: Logique du Scanner avec la caméra (Pharmacie)
+  // Logique du Scanner avec la caméra (Pharmacie) - CORRIGÉ POUR MOBILE (Caméra arrière)
   useEffect(() => {
     let html5QrcodeScanner: Html5QrcodeScanner | null = null;
     if (isCameraActive) {
       html5QrcodeScanner = new Html5QrcodeScanner(
-        "reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false
+        "reader", { fps: 10, qrbox: { width: 250, height: 250 }, videoConstraints: { facingMode: "environment" } }, false
       );
       html5QrcodeScanner.render(
         (decodedText) => {
           handleTraitementScan(decodedText);
-          setIsCameraActive(false); // Désactive la caméra après un scan réussi
+          setIsCameraActive(false); 
         },
         (error) => { /* Ignorer les erreurs de frame vide */ }
       );
     }
     return () => {
-      if (html5QrcodeScanner) {
-        html5QrcodeScanner.clear().catch(error => console.error("Failed to clear scanner", error));
-      }
+      if (html5QrcodeScanner) html5QrcodeScanner.clear().catch(e => console.error(e));
     };
   }, [isCameraActive]);
 
-  // NOUVEAU: Logique du Scanner avec la caméra (Admin - Ajout Produit)
+  // Logique du Scanner (Admin - Ajout Produit)
   useEffect(() => {
     let html5QrcodeScanner: Html5QrcodeScanner | null = null;
     if (isAdminCameraActive) {
       html5QrcodeScanner = new Html5QrcodeScanner(
-        "admin-reader", { fps: 10, qrbox: { width: 250, height: 100 } }, false
+        "admin-reader", { fps: 10, qrbox: { width: 250, height: 100 }, videoConstraints: { facingMode: "environment" } }, false
       );
       html5QrcodeScanner.render(
         (decodedText) => {
@@ -131,24 +159,55 @@ const ClinicDashboard: React.FC = () => {
       );
     }
     return () => {
-      if (html5QrcodeScanner) {
-        html5QrcodeScanner.clear().catch(error => console.error("Failed to clear scanner", error));
-      }
+      if (html5QrcodeScanner) html5QrcodeScanner.clear().catch(e => console.error(e));
     };
   }, [isAdminCameraActive]);
 
-  // --- FONCTIONS AUTHENTIFICATION ---
-  const handleLogin = (e: React.FormEvent) => {
+
+  // --- FONCTIONS SYNCHRONISATION FIREBASE (Optimiste) ---
+  const syncToFirebase = async (colName: string, docId: string, data: any) => {
+    if (!db) return; // Si Firebase n'est pas configuré, on ignore silencieusement
+    try {
+      await setDoc(doc(db, colName, docId), data, { merge: true });
+    } catch (e) { console.error("Erreur de sync Firebase:", e); }
+  };
+
+
+  // --- FONCTIONS AUTHENTIFICATION (Gère Local ET Firebase) ---
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const user = utilisateurs.find(u => u.username === loginUsername && u.mdp === loginPwd);
-    if (user) {
-      setLoggedInUser(user); setLoginError('');
-      if (user.role === 'Responsable') setActiveTab('admin');
-      else if (user.role === 'Caissiere') setActiveTab('pharmacie');
-      else if (user.role === 'Infirmier') setActiveTab('triage');
-      else if (user.role === 'Medecin') setActiveTab('medecin');
-      else setActiveTab('accueil');
-    } else { setLoginError('Identifiant ou mot de passe incorrect.'); }
+    setLoginError('');
+
+    // Si l'identifiant est un email (contient '@'), on tente Firebase Auth
+    if (loginUsername.includes('@')) {
+      try {
+        if (!auth) throw new Error("Firebase n'est pas configuré.");
+        const userCredential = await signInWithEmailAndPassword(auth, loginUsername, loginPwd);
+        setLoggedInUser({
+          id: userCredential.user.uid,
+          username: userCredential.user.email || 'Admin',
+          mdp: '***',
+          role: 'Responsable',
+          nomComplet: 'Directeur (Sécurisé)'
+        });
+        setActiveTab('admin');
+      } catch (error: any) {
+        setLoginError("Authentification Firebase échouée. Vérifiez vos accès.");
+      }
+    } else {
+      // Sinon, on utilise la base locale pour le personnel (Médecin, Caissière, etc.)
+      const user = utilisateurs.find(u => u.username === loginUsername && u.mdp === loginPwd);
+      if (user) {
+        setLoggedInUser(user);
+        if (user.role === 'Responsable') setActiveTab('admin');
+        else if (user.role === 'Caissiere') setActiveTab('pharmacie');
+        else if (user.role === 'Infirmier') setActiveTab('triage');
+        else if (user.role === 'Medecin') setActiveTab('medecin');
+        else setActiveTab('accueil');
+      } else {
+        setLoginError('Identifiant ou mot de passe incorrect.');
+      }
+    }
   };
 
   const handleLogout = () => {
@@ -164,7 +223,12 @@ const ClinicDashboard: React.FC = () => {
       ticket: `${nouveauService}-${numeroFormatte}`, nom: nouveauNom, service: nouveauService,
       statut: 'Triage', heureArrivee: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
-    setPatients([...patients, newPatient]); setTicketGenere(newPatient); setNouveauNom('');
+    
+    const newPatientsList = [...patients, newPatient];
+    setPatients(newPatientsList); 
+    setTicketGenere(newPatient); 
+    setNouveauNom('');
+    syncToFirebase('patients', newPatient.id, newPatient); // Sync Firebase
   };
 
   const imprimerTicketAccueil = () => {
@@ -179,7 +243,7 @@ const ClinicDashboard: React.FC = () => {
         .ticket-num { font-size: 28px; margin: 10px 0; border: 2px solid #000; padding: 5px; }
         .qr-img { width: 120px; height: 120px; margin: 10px auto; }
       </style></head><body>
-        <div class="bold" style="font-size:16px;">ONG SANTE PLUS</div>
+        <div class="bold" style="font-size:16px;">Clinique Ong Notre Grenier</div>
         <div style="font-size:12px; margin-bottom: 10px;">${new Date().toLocaleDateString()} - ${ticketGenere.heureArrivee}</div>
         <div>Ticket d'attente</div>
         <div class="ticket-num bold">${ticketGenere.ticket}</div>
@@ -194,24 +258,28 @@ const ClinicDashboard: React.FC = () => {
 
   const validerTriage = () => {
     if (!selectedPatientTriage) return;
-    setPatients(patients.map(p => p.id === selectedPatientTriage.id ? { 
-      ...p, statut: 'Consultation', constantes: { sys: Number(tensionSys), dia: Number(tensionDia), temp: Number(temperature), poids: Number(poids) }
-    } : p));
+    const patientAjourne = { ...selectedPatientTriage, statut: 'Consultation' as const, constantes: { sys: Number(tensionSys), dia: Number(tensionDia), temp: Number(temperature), poids: Number(poids) } };
+    setPatients(patients.map(p => p.id === selectedPatientTriage.id ? patientAjourne : p));
     setSelectedPatientTriage(null); setTensionSys(''); setTensionDia(''); setTemperature(''); setPoids('');
+    syncToFirebase('patients', patientAjourne.id, patientAjourne);
   };
 
   const totalOrdonnance = ordonnance.reduce((sum, med) => sum + med.prix, 0);
 
   const envoyerPharmacie = () => {
     if (!selectedPatientMed) return;
-    setPatients(patients.map(p => p.id === selectedPatientMed.id ? { ...p, statut: 'Pharmacie', ordonnance: ordonnance } : p));
+    const patientAjourne = { ...selectedPatientMed, statut: 'Pharmacie' as const, ordonnance: ordonnance };
+    setPatients(patients.map(p => p.id === selectedPatientMed.id ? patientAjourne : p));
     setSelectedPatientMed(null); setNotesCliniques(''); setDiagnostic(''); setOrdonnance([]);
+    syncToFirebase('patients', patientAjourne.id, patientAjourne);
   };
 
   const terminerSansOrdonnance = () => {
     if (!selectedPatientMed) return;
-    setPatients(patients.map(p => p.id === selectedPatientMed.id ? { ...p, statut: 'Terminé' } : p));
+    const patientAjourne = { ...selectedPatientMed, statut: 'Terminé' as const };
+    setPatients(patients.map(p => p.id === selectedPatientMed.id ? patientAjourne : p));
     setSelectedPatientMed(null); setNotesCliniques(''); setDiagnostic(''); setOrdonnance([]);
+    syncToFirebase('patients', patientAjourne.id, patientAjourne);
   };
 
   const annulerOrdonnance = () => { setOrdonnance([]); };
@@ -239,10 +307,16 @@ const ClinicDashboard: React.FC = () => {
   };
 
   const validerPaiement = () => {
-    setMedicaments(medicaments.map(med => {
+    const newMeds = medicaments.map(med => {
       const ligne = panier.find(l => l.medicament.id === med.id);
-      return ligne ? { ...med, stock: med.stock - ligne.quantite } : med;
-    }));
+      if (ligne) {
+        const medAjourne = { ...med, stock: med.stock - ligne.quantite };
+        syncToFirebase('medicaments', medAjourne.id, medAjourne);
+        return medAjourne;
+      }
+      return med;
+    });
+    setMedicaments(newMeds);
     
     const montantTotal = panier.reduce((sum, l) => sum + (l.medicament.prix * l.quantite), 0);
     const dateActuelle = new Date();
@@ -256,13 +330,15 @@ const ClinicDashboard: React.FC = () => {
     };
     
     setHistoriqueVentes([nouvelleTransaction, ...historiqueVentes]);
+    syncToFirebase('ventes', nouvelleTransaction.id, nouvelleTransaction);
     
     if (selectedPatientPharmacie) {
-      setPatients(patients.map(p => p.id === selectedPatientPharmacie.id ? { ...p, statut: 'Terminé' } : p));
+      const patientAjourne = { ...selectedPatientPharmacie, statut: 'Terminé' as const };
+      setPatients(patients.map(p => p.id === selectedPatientPharmacie.id ? patientAjourne : p));
       setSelectedPatientPharmacie(null);
+      syncToFirebase('patients', patientAjourne.id, patientAjourne);
     }
     setPanier([]);
-    
     setRecuApercu(nouvelleTransaction);
   };
 
@@ -285,7 +361,7 @@ const ClinicDashboard: React.FC = () => {
           </style>
         </head>
         <body>
-          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">ONG SANTE PLUS</div>
+          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">Clinique Ong Notre Grenier</div>
           <div class="center">Reçu de Caisse</div>
           <div class="center" style="font-size:10px;">Le ${transaction.date} à ${transaction.heure}</div>
           <div class="divider"></div>
@@ -304,9 +380,7 @@ const ClinicDashboard: React.FC = () => {
           <div class="divider"></div>
           <div class="flex bold" style="font-size: 14px;"><span>TOTAL NET:</span><span>${transaction.montant} F</span></div>
           <div class="divider"></div>
-          
           <img class="qr-code" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${transaction.id}" alt="QR Code Reçu" />
-          
           <div class="center" style="margin-top:5px; font-size:10px;">Bonne guérison !</div>
           <script>window.onload = function() { window.print(); window.close(); }</script>
         </body>
@@ -334,9 +408,16 @@ const ClinicDashboard: React.FC = () => {
     setUtilisateurs(utilisateurs.filter(u => u.id !== id));
   };
 
+  const simulerScanAdmin = () => {
+    const codeGenere = Math.floor(100000000 + Math.random() * 900000000).toString();
+    setNewProduct({...newProduct, codeBarre: codeGenere});
+  };
+
   const saveProduct = () => {
     if (!newProduct.nom || !newProduct.codeBarre) return alert("Le nom et le code barre sont obligatoires.");
-    setMedicaments([...medicaments, { ...newProduct, id: `M${Date.now()}` } as Medicament]);
+    const medFinal = { ...newProduct, id: `M${Date.now()}` } as Medicament;
+    setMedicaments([...medicaments, medFinal]);
+    syncToFirebase('medicaments', medFinal.id, medFinal);
     setShowAddProduct(false); setNewProduct({ stock: 0, prix: 0 });
     setIsAdminCameraActive(false);
   };
@@ -356,7 +437,7 @@ const ClinicDashboard: React.FC = () => {
     if (!printWindow) return;
     let html = `<html><head><title>Rapport Financier</title>
       <style>body { font-family: Arial; padding: 20px; } table { border-collapse: collapse; width: 100%; margin-top: 20px;} th, td { border: 1px solid #ccc; padding: 10px; text-align: left; } th { background-color: #f0f0f0; } .total { font-weight: bold; font-size: 1.2em; margin-top: 20px; text-align: right;}</style></head><body>
-      <h2>Rapport des Encaissements - ONG SANTE PLUS</h2><p>Date : ${new Date().toLocaleDateString()}</p>
+      <h2>Rapport des Encaissements - Clinique Ong Notre Grenier</h2><p>Date : ${new Date().toLocaleDateString()}</p>
       <table><tr><th>Ref Facture</th><th>Date/Heure</th><th>Patient</th><th>Montant (FCFA)</th></tr>`;
     let total = 0;
     historiqueVentes.forEach(v => {
@@ -367,6 +448,11 @@ const ClinicDashboard: React.FC = () => {
     printWindow.document.write(html); printWindow.document.close();
   };
 
+  // --- FILTRES DE RECHERCHE DYNAMIQUES ---
+  const filteredAdminStock = medicaments.filter(m => m.nom.toLowerCase().includes(searchAdminStock.toLowerCase()) || m.codeBarre.includes(searchAdminStock));
+  const filteredMedecinStock = medicaments.filter(m => m.nom.toLowerCase().includes(searchMedecin.toLowerCase()) || m.codeBarre.includes(searchMedecin));
+
+
   // --- RENDU UI PRINCIPAL ---
   if (!loggedInUser) {
     return (
@@ -374,17 +460,23 @@ const ClinicDashboard: React.FC = () => {
         <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
           <div className="text-center mb-8">
             <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30"><ShieldPlus size={32} className="text-white" /></div>
-            <h1 className="text-2xl font-black text-slate-800 tracking-tight">ONG SANTE PLUS</h1>
+            <h1 className="text-2xl font-black text-slate-800 tracking-tight">Clinique Ong Notre Grenier</h1>
             <p className="text-slate-500 text-sm mt-1">Portail de Gestion Sécurisé</p>
           </div>
           <form onSubmit={handleLogin} className="flex flex-col gap-4">
             {loginError && <div className="bg-red-50 text-red-600 text-sm p-3 rounded-xl border border-red-100 flex items-center gap-2"><AlertCircle size={16}/> {loginError}</div>}
-            <div><label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">Identifiant</label><input type="text" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" placeholder="ex: admin" required /></div>
-            <div><label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">Mot de passe</label><input type="password" value={loginPwd} onChange={e => setLoginPwd(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" placeholder="••••••••" required /></div>
+            <div>
+              <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">Identifiant ou Email Admin</label>
+              <input type="text" value={loginUsername} onChange={e => setLoginUsername(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="ex: admin@ong.com ou medecin" required />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">Mot de passe</label>
+              <input type="password" value={loginPwd} onChange={e => setLoginPwd(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••" required />
+            </div>
             <button type="submit" className="mt-4 w-full bg-slate-900 text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 hover:bg-slate-800 transition-all"><Lock size={18} /> Connexion</button>
           </form>
-          <div className="mt-6 p-4 bg-blue-50 rounded-xl text-xs text-blue-800 border border-blue-100">
-            <strong>Tests :</strong> admin, medecin, infirmier, caisse, accueil (Mdp: 1234)
+          <div className="mt-6 p-4 bg-blue-50 rounded-xl text-xs text-blue-800 border border-blue-100 text-center">
+            <strong>Tests Locaux :</strong> admin, medecin, infirmier, caisse, accueil (Mdp: 1234)
           </div>
         </div>
       </div>
@@ -396,12 +488,11 @@ const ClinicDashboard: React.FC = () => {
       {/* HEADER RESPONSIVE */}
       <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-30 relative">
         <div className="flex items-center gap-3">
-          {/* Bouton Menu Mobile */}
           <button className="md:hidden p-2 bg-slate-800 rounded-lg text-white" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
             {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
           <div className="bg-blue-500 p-2 rounded-lg"><ShieldPlus size={24} className="text-white" /></div>
-          <h1 className="text-xl font-bold hidden sm:block">ONG SANTE PLUS</h1>
+          <h1 className="text-xl font-bold hidden sm:block">Clinique Ong Notre Grenier</h1>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block"><p className="text-sm font-bold text-emerald-400">Connecté(e)</p><p className="text-sm font-bold">{loggedInUser.nomComplet} ({loggedInUser.role})</p></div>
@@ -421,9 +512,8 @@ const ClinicDashboard: React.FC = () => {
           </nav>
         </aside>
 
-        {/* MAIN CONTENT avec padding adaptable */}
+        {/* MAIN CONTENT */}
         <main className="flex-1 p-4 md:p-8 overflow-y-auto bg-slate-50 relative w-full">
-          {/* OVERLAY POUR MENU MOBILE */}
           {isMobileMenuOpen && <div className="absolute inset-0 bg-slate-900/50 z-10 md:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>}
 
           {/* === MODULE 0: ADMIN === */}
@@ -432,11 +522,11 @@ const ClinicDashboard: React.FC = () => {
               <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
                 <div><h2 className="text-2xl md:text-3xl font-bold text-slate-800">Espace Administrateur</h2></div>
               </div>
-              <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-2">
-                <button onClick={() => setAdminSubTab('stats')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'stats' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Tableau de bord</button>
-                <button onClick={() => setAdminSubTab('stock')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'stock' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Stock Pharmacie</button>
-                <button onClick={() => setAdminSubTab('personnel')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'personnel' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Personnel</button>
-                <button onClick={() => setAdminSubTab('rapports')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'rapports' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Rapports</button>
+              <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-2 overflow-x-auto w-full">
+                <button onClick={() => setAdminSubTab('stats')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'stats' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Tableau de bord</button>
+                <button onClick={() => setAdminSubTab('stock')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'stock' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Stock Pharmacie</button>
+                <button onClick={() => setAdminSubTab('personnel')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'personnel' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Personnel</button>
+                <button onClick={() => setAdminSubTab('rapports')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'rapports' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Rapports</button>
               </div>
 
               {adminSubTab === 'stats' && (
@@ -449,7 +539,17 @@ const ClinicDashboard: React.FC = () => {
 
               {adminSubTab === 'stock' && (
                  <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col overflow-hidden">
-                 <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4"><h3 className="font-bold flex items-center gap-2"><Package size={20}/> Base de médicaments</h3><button onClick={() => setShowAddProduct(!showAddProduct)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold w-full sm:w-auto">{showAddProduct ? 'Fermer' : 'Nouveau Produit'}</button></div>
+                 <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
+                   <h3 className="font-bold flex items-center gap-2"><Package size={20}/> Base de médicaments</h3>
+                   <div className="flex w-full sm:w-auto gap-3">
+                     {/* NOUVEAU: Barre de recherche Admin */}
+                     <div className="relative flex-1 sm:w-64">
+                       <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
+                       <input type="text" placeholder="Rechercher..." value={searchAdminStock} onChange={e => setSearchAdminStock(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg outline-none focus:border-blue-500" />
+                     </div>
+                     <button onClick={() => setShowAddProduct(!showAddProduct)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap">{showAddProduct ? 'Fermer' : 'Nouveau Produit'}</button>
+                   </div>
+                 </div>
                  
                  {showAddProduct && (
                    <div className="p-5 bg-blue-50 border-b flex flex-col gap-4">
@@ -467,13 +567,18 @@ const ClinicDashboard: React.FC = () => {
                      )}
                    </div>
                  )}
-                 <div className="overflow-x-auto">
-                   <table className="w-full text-left text-sm whitespace-nowrap">
+                 <div className="w-full overflow-x-auto">
+                   <table className="w-full text-left text-sm whitespace-nowrap min-w-[600px]">
                      <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-4">Médicament</th><th className="p-4">Code Barre</th><th className="p-4">Prix</th><th className="p-4">Stock</th><th className="p-4">Action</th></tr></thead>
                      <tbody>
-                       {medicaments.map(med => (
-                         <tr key={med.id} className="border-b"><td className="p-4 font-bold">{med.nom}</td><td className="p-4 font-mono">{med.codeBarre}</td><td className="p-4">{med.prix.toLocaleString()} F</td><td className="p-4">{med.stock}</td><td className="p-4"><button onClick={() => setMedicaments(medicaments.map(m => m.id === med.id ? {...m, stock: m.stock + 50} : m))} className="text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg font-bold">+50</button></td></tr>
+                       {filteredAdminStock.map(med => (
+                         <tr key={med.id} className="border-b"><td className="p-4 font-bold">{med.nom}</td><td className="p-4 font-mono">{med.codeBarre}</td><td className="p-4">{med.prix.toLocaleString()} F</td><td className="p-4">{med.stock}</td><td className="p-4"><button onClick={() => {
+                           const updatedMed = {...med, stock: med.stock + 50};
+                           setMedicaments(medicaments.map(m => m.id === med.id ? updatedMed : m));
+                           syncToFirebase('medicaments', med.id, updatedMed);
+                         }} className="text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg font-bold">+50</button></td></tr>
                        ))}
+                       {filteredAdminStock.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-slate-400">Aucun médicament trouvé.</td></tr>}
                      </tbody>
                    </table>
                  </div>
@@ -492,8 +597,8 @@ const ClinicDashboard: React.FC = () => {
                      <div><button onClick={saveUser} className="w-full bg-slate-900 text-white p-2 rounded-lg">Enregistrer</button></div>
                    </div>
                  )}
-                 <div className="overflow-x-auto">
-                   <table className="w-full text-left text-sm whitespace-nowrap">
+                 <div className="w-full overflow-x-auto">
+                   <table className="w-full text-left text-sm whitespace-nowrap min-w-[600px]">
                      <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-4">Nom</th><th className="p-4">Rôle</th><th className="p-4">Login</th><th className="p-4">Actions</th></tr></thead>
                      <tbody>{utilisateurs.map(u => (<tr key={u.id} className="border-b"><td className="p-4 font-bold">{u.nomComplet}</td><td className="p-4">{u.role}</td><td className="p-4">{u.username}</td><td className="p-4"><button onClick={() => deleteUser(u.id)} className="text-red-500"><Trash2 size={16}/></button></td></tr>))}</tbody>
                    </table>
@@ -507,8 +612,8 @@ const ClinicDashboard: React.FC = () => {
                     <h3 className="font-bold flex items-center gap-2"><FileBarChart size={20}/> Historique</h3>
                     <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto"><button onClick={exporterExcel} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 w-full sm:w-auto"><Download size={16}/> Exporter Excel</button><button onClick={exporterPDF} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 w-full sm:w-auto"><FileText size={16}/> Enregistrer PDF</button></div>
                   </div>
-                  <div className="p-4 md:p-6 overflow-x-auto">
-                    <table className="w-full text-left text-sm border whitespace-nowrap">
+                  <div className="w-full overflow-x-auto p-4 md:p-6">
+                    <table className="w-full text-left text-sm border whitespace-nowrap min-w-[600px]">
                       <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-3">Facture</th><th className="p-3">Date/Heure</th><th className="p-3">Patient</th><th className="p-3 text-right">Montant</th></tr></thead>
                       <tbody>{historiqueVentes.map(v => (<tr key={v.id} className="border-b"><td className="p-3 font-mono text-slate-500">{v.id}</td><td className="p-3">{v.date} {v.heure}</td><td className="p-3 font-bold">{v.patientNom}</td><td className="p-3 text-right font-bold text-emerald-600">{v.montant.toLocaleString()} F</td></tr>))}</tbody>
                     </table>
@@ -628,9 +733,19 @@ const ClinicDashboard: React.FC = () => {
                           <div><label className="text-sm font-bold text-slate-700 mb-2 block">Diagnostic Retenu</label><input type="text" className="w-full p-4 border rounded-xl font-bold outline-none focus:border-blue-400" value={diagnostic} onChange={e => setDiagnostic(e.target.value)} /></div>
                         </div>
                         <div className="bg-blue-50 rounded-2xl p-4 md:p-5 flex flex-col border border-blue-100 min-h-[300px]">
-                          <h4 className="font-bold text-blue-900 mb-2 flex items-center gap-2"><Pill size={18}/> Ordonnance Numérique</h4>
+                          <div className="flex justify-between items-center mb-3">
+                            <h4 className="font-bold text-blue-900 flex items-center gap-2"><Pill size={18}/> Ordonnance Numérique</h4>
+                            <span className="text-xs bg-blue-200 text-blue-800 px-2 py-1 rounded hidden sm:block">Prix transparents</span>
+                          </div>
+                          
+                          {/* NOUVEAU: Barre de recherche Médecin */}
+                          <div className="relative mb-3">
+                            <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
+                            <input type="text" placeholder="Rechercher un médicament..." value={searchMedecin} onChange={e => setSearchMedecin(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg outline-none focus:border-blue-500" />
+                          </div>
+
                           <div className="bg-white rounded-xl border p-2 mb-4 max-h-32 md:max-h-40 overflow-y-auto">
-                            {medicaments.map(med => {
+                            {filteredMedecinStock.map(med => {
                               const isSelected = ordonnance.some(m => m.id === med.id);
                               return (
                                 <div key={med.id} onClick={() => setOrdonnance(isSelected ? ordonnance.filter(m => m.id !== med.id) : [...ordonnance, med])} className={`p-3 rounded-lg cursor-pointer flex justify-between items-center ${isSelected ? 'bg-blue-100 text-blue-800' : 'hover:bg-slate-50'}`}>
@@ -639,6 +754,7 @@ const ClinicDashboard: React.FC = () => {
                                 </div>
                               );
                             })}
+                            {filteredMedecinStock.length === 0 && <p className="text-xs text-slate-400 text-center py-2">Aucun médicament trouvé.</p>}
                           </div>
                           <div className="bg-white border rounded-xl p-4 flex-1 flex flex-col">
                             <ul className="list-disc pl-4 text-sm font-bold text-slate-700 mb-4 flex-1 overflow-y-auto">{ordonnance.map(m => <li key={m.id}>{m.nom}</li>)}</ul>
@@ -685,15 +801,14 @@ const ClinicDashboard: React.FC = () => {
 
                   <div className="mt-auto">
                     <div className="flex justify-between items-center mb-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2"><Scan size={14}/> Scanner un code</label>
+                      <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2"><Scan size={14}/> Scanner Actif</label>
                       <button onClick={() => setIsCameraActive(!isCameraActive)} className={`p-2 rounded-lg text-white ${isCameraActive ? 'bg-red-500' : 'bg-blue-600'}`}>
                         <Camera size={16} />
                       </button>
                     </div>
 
-                    {/* VRAI SCANNER CAMERA */}
                     {isCameraActive && (
-                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500">
+                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500 w-full max-w-sm mx-auto">
                         <div id="reader" className="w-full"></div>
                         <p className="text-white text-xs text-center p-2">Caméra active - Pointez vers un code</p>
                       </div>
@@ -706,7 +821,7 @@ const ClinicDashboard: React.FC = () => {
                         type="text" 
                         value={codeSaisi} 
                         onChange={(e) => setCodeSaisi(e.target.value)} 
-                        placeholder="Ou saisissez le code..." 
+                        placeholder="Scan QR ou Code Barre" 
                         className="w-full pl-12 pr-4 py-4 border border-slate-300 rounded-xl font-mono text-sm md:text-lg outline-none focus:border-blue-500 focus:ring-2"
                       />
                     </form>
@@ -748,7 +863,7 @@ const ClinicDashboard: React.FC = () => {
                         <h3 className="text-slate-800 font-bold mb-4 flex items-center gap-2"><Search size={20}/> Aperçu du ticket</h3>
                         
                         <div className="bg-white p-4 w-[58mm] min-h-[100mm] shadow-lg mb-6 font-mono text-[10px] text-black border border-slate-300 mx-auto">
-                          <div className="text-center font-bold text-sm mb-1">ONG SANTE PLUS</div>
+                          <div className="text-center font-bold text-sm mb-1">Clinique Ong Notre Grenier</div>
                           <div className="text-center mb-1">Reçu de Caisse</div>
                           <div className="text-center text-[8px]">Le {recuApercu.date} à {recuApercu.heure}</div>
                           <div className="border-t border-dashed border-black my-2"></div>
@@ -769,11 +884,7 @@ const ClinicDashboard: React.FC = () => {
                           <div className="border-t border-dashed border-black my-2"></div>
                           
                           <div className="flex justify-center my-2">
-                            <img 
-                              src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${recuApercu.id}`} 
-                              alt="QR Code Reçu" 
-                              className="w-16 h-16 object-contain"
-                            />
+                            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${recuApercu.id}`} alt="QR Code Reçu" className="w-16 h-16 object-contain" />
                           </div>
 
                           <div className="text-center mt-2 text-[8px]">Bonne guérison !</div>
