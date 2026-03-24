@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, collection, addDoc, updateDoc, doc, setDoc, getDocs } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, updateDoc, doc, setDoc, getDocs, onSnapshot } from 'firebase/firestore';
 import { 
   Users, Activity, Stethoscope, Pill, 
   Settings, CreditCard, QrCode, Printer,
@@ -15,9 +15,9 @@ import {
 } from 'lucide-react';
 
 // ============================================================================
-// CONFIGURATION FIREBASE
+// CONFIGURATION FIREBASE (Remplacez par vos clés pour activer le Cloud)
 // ============================================================================
-// Import the functions you need from the SDKs you need
+/ Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
 // TODO: Add SDKs for Firebase products that you want to use
 // https://firebase.google.com/docs/web/setup#available-libraries
@@ -121,6 +121,64 @@ const ClinicDashboard: React.FC = () => {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isAdminCameraActive, setIsAdminCameraActive] = useState(false);
 
+  // ==========================================================================
+  // SYNERGIE TEMPS RÉEL (INTERCONNEXION DE TOUS LES SERVICES VIA FIREBASE)
+  // ==========================================================================
+  useEffect(() => {
+    if (!db) return; // Sécurité si Firebase n'est pas branché
+    
+    // Écoute des Patients en temps réel
+    const unsubPatients = onSnapshot(collection(db, 'patients'), (snapshot) => {
+      const data: Patient[] = [];
+      snapshot.forEach(doc => data.push(doc.data() as Patient));
+      if (data.length > 0) setPatients(data);
+    });
+
+    // Écoute des Médicaments (Stocks) en temps réel
+    const unsubMedicaments = onSnapshot(collection(db, 'medicaments'), (snapshot) => {
+      const data: Medicament[] = [];
+      snapshot.forEach(doc => data.push(doc.data() as Medicament));
+      if (data.length > 0) setMedicaments(data);
+    });
+
+    // Écoute des Rapports (Caisse) en temps réel
+    const unsubVentes = onSnapshot(collection(db, 'ventes'), (snapshot) => {
+      const data: RapportVente[] = [];
+      snapshot.forEach(doc => data.push(doc.data() as RapportVente));
+      // Tri par date pour l'historique
+      data.sort((a, b) => new Date(b.date + ' ' + b.heure).getTime() - new Date(a.date + ' ' + a.heure).getTime());
+      if (data.length > 0) setHistoriqueVentes(data);
+    });
+
+    // Écoute des Utilisateurs (Gestion des accès Admin)
+    const unsubUtilisateurs = onSnapshot(collection(db, 'utilisateurs'), (snapshot) => {
+      const data: User[] = [];
+      snapshot.forEach(doc => data.push(doc.data() as User));
+      if (data.length > 0) setUtilisateurs(data);
+    });
+
+    return () => {
+      unsubPatients();
+      unsubMedicaments();
+      unsubVentes();
+      unsubUtilisateurs();
+    };
+  }, []);
+
+  const syncToFirebase = async (colName: string, docId: string, data: any) => {
+    if (!db) return;
+    try {
+      await setDoc(doc(db, colName, docId), data, { merge: true });
+    } catch (e) { 
+      console.error("Erreur de sync Firebase (Mode hors ligne conservé):", e); 
+    }
+  };
+
+
+  // ==========================================================================
+  // GESTION STABILISÉE DES CAMÉRAS (SCANNERS)
+  // ==========================================================================
+  
   // Focus automatique Scanner Pharmacie
   useEffect(() => {
     if (activeTab === 'pharmacie' && inputScanRef.current && !recuApercu && !isCameraActive) {
@@ -128,10 +186,11 @@ const ClinicDashboard: React.FC = () => {
     }
   }, [activeTab, recuApercu, isCameraActive]);
 
-  // Logique du Scanner avec la caméra (Pharmacie)
+  // Scanner Pharmacie (Caméra Arrière optimisée)
   useEffect(() => {
     let html5QrcodeScanner: Html5QrcodeScanner | null = null;
     if (isCameraActive) {
+      // Délais pour garantir que le composant React a bien monté la div 'reader'
       setTimeout(() => {
         const element = document.getElementById("reader");
         if (element) {
@@ -143,20 +202,22 @@ const ClinicDashboard: React.FC = () => {
           html5QrcodeScanner.render(
             (decodedText) => {
               handleTraitementScan(decodedText);
-              if (html5QrcodeScanner) html5QrcodeScanner.clear();
+              if (html5QrcodeScanner) {
+                html5QrcodeScanner.clear();
+              }
               setIsCameraActive(false); 
             },
-            (error) => { /* Ignorer les erreurs de frame vide */ }
+            (error) => { /* Ignorer les erreurs de frame vide silencieusement */ }
           );
         }
-      }, 100);
+      }, 150);
     }
     return () => {
       if (html5QrcodeScanner) html5QrcodeScanner.clear().catch(e => console.error(e));
     };
   }, [isCameraActive]);
 
-  // Logique du Scanner (Admin - Ajout Produit)
+  // Scanner Admin (Ajout Produit)
   useEffect(() => {
     let html5QrcodeScanner: Html5QrcodeScanner | null = null;
     if (isAdminCameraActive) {
@@ -174,26 +235,15 @@ const ClinicDashboard: React.FC = () => {
               if (html5QrcodeScanner) html5QrcodeScanner.clear();
               setIsAdminCameraActive(false);
             },
-            (error) => { /* Ignorer les erreurs de frame vide */ }
+            (error) => { }
           );
         }
-      }, 100);
+      }, 150);
     }
     return () => {
       if (html5QrcodeScanner) html5QrcodeScanner.clear().catch(e => console.error(e));
     };
   }, [isAdminCameraActive]);
-
-
-  // --- FONCTIONS SYNCHRONISATION FIREBASE ---
-  const syncToFirebase = async (colName: string, docId: string, data: any) => {
-    if (!db) return;
-    try {
-      await setDoc(doc(db, colName, docId), data, { merge: true });
-    } catch (e) { 
-      console.error("Erreur de sync Firebase (Mode hors ligne conservé):", e); 
-    }
-  };
 
 
   // --- FONCTIONS AUTHENTIFICATION ---
@@ -246,7 +296,7 @@ const ClinicDashboard: React.FC = () => {
     setPatients(newPatientsList); 
     setTicketGenere(newPatient); 
     setNouveauNom('');
-    syncToFirebase('patients', newPatient.id, newPatient);
+    syncToFirebase('patients', newPatient.id, newPatient); // Pousse sur Firebase pour que l'infirmier le voit !
   };
 
   const imprimerTicketAccueil = () => {
@@ -261,7 +311,7 @@ const ClinicDashboard: React.FC = () => {
         .ticket-num { font-size: 28px; margin: 10px 0; border: 2px solid #000; padding: 5px; }
         .qr-img { width: 120px; height: 120px; margin: 10px auto; }
       </style></head><body>
-        <div class="bold" style="font-size:16px;">ONG SANTE PLUS</div>
+        <div class="bold" style="font-size:16px;">Clinique Ong Grenier</div>
         <div style="font-size:12px; margin-bottom: 10px;">${new Date().toLocaleDateString()} - ${ticketGenere.heureArrivee}</div>
         <div>Ticket d'attente</div>
         <div class="ticket-num bold">${ticketGenere.ticket}</div>
@@ -362,7 +412,7 @@ const ClinicDashboard: React.FC = () => {
   };
 
   const validerPaiement = () => {
-    // 1. Déduction des stocks
+    // 1. Déduction des stocks dans Firebase
     const newMeds = medicaments.map(med => {
       const ligne = panier.find(l => l.medicament.id === med.id);
       if (ligne) {
@@ -386,9 +436,8 @@ const ClinicDashboard: React.FC = () => {
       detailsPanier: [...panier] 
     };
     
-    // Ajout local et Firebase
     setHistoriqueVentes([nouvelleTransaction, ...historiqueVentes]);
-    syncToFirebase('ventes', nouvelleTransaction.id, nouvelleTransaction);
+    syncToFirebase('ventes', nouvelleTransaction.id, nouvelleTransaction); // Pousse vers l'Admin en temps réel
     
     // 3. Mise à jour du patient
     if (selectedPatientPharmacie) {
@@ -421,7 +470,7 @@ const ClinicDashboard: React.FC = () => {
           </style>
         </head>
         <body>
-          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">ONG SANTE PLUS</div>
+          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">Clinique Ong Grenier</div>
           <div class="center">Reçu de Caisse</div>
           <div class="center" style="font-size:10px;">Le ${transaction.date} à ${transaction.heure}</div>
           <div class="divider"></div>
@@ -459,7 +508,9 @@ const ClinicDashboard: React.FC = () => {
 
   const saveUser = () => {
     if (!newUser.username || !newUser.mdp || !newUser.nomComplet) return;
-    setUtilisateurs([...utilisateurs, { ...newUser, id: `U${Date.now()}` } as User]);
+    const finalUser = { ...newUser, id: `U${Date.now()}` } as User;
+    setUtilisateurs([...utilisateurs, finalUser]);
+    syncToFirebase('utilisateurs', finalUser.id, finalUser); // Sync user
     setShowAddUser(false); setNewUser({ role: 'Medecin' });
   };
 
@@ -518,7 +569,7 @@ const ClinicDashboard: React.FC = () => {
     if (!printWindow) return;
     let html = `<html><head><title>Rapport Financier</title>
       <style>body { font-family: Arial; padding: 20px; } table { border-collapse: collapse; width: 100%; margin-top: 20px;} th, td { border: 1px solid #ccc; padding: 10px; text-align: left; } th { background-color: #f0f0f0; } .total { font-weight: bold; font-size: 1.2em; margin-top: 20px; text-align: right;}</style></head><body>
-      <h2>Rapport des Encaissements - ONG SANTE PLUS</h2><p>Date : ${new Date().toLocaleDateString()}</p>
+      <h2>Rapport des Encaissements - Clinique Ong Grenier</h2><p>Date : ${new Date().toLocaleDateString()}</p>
       <table><tr><th>Ref Facture</th><th>Date/Heure</th><th>Patient</th><th>Montant (FCFA)</th></tr>`;
     let total = 0;
     historiqueVentes.forEach(v => {
@@ -541,7 +592,7 @@ const ClinicDashboard: React.FC = () => {
         <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
           <div className="text-center mb-8">
             <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30"><ShieldPlus size={32} className="text-white" /></div>
-            <h1 className="text-2xl font-black text-slate-800 tracking-tight">ONG SANTE PLUS</h1>
+            <h1 className="text-2xl font-black text-slate-800 tracking-tight">Clinique Ong Grenier</h1>
             <p className="text-slate-500 text-sm mt-1">Portail de Gestion Sécurisé</p>
           </div>
           <form onSubmit={handleLogin} className="flex flex-col gap-4">
@@ -573,7 +624,7 @@ const ClinicDashboard: React.FC = () => {
             {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
           <div className="bg-blue-500 p-2 rounded-lg"><ShieldPlus size={24} className="text-white" /></div>
-          <h1 className="text-xl font-bold hidden sm:block">ONG SANTE PLUS</h1>
+          <h1 className="text-xl font-bold hidden sm:block">Clinique Ong Grenier</h1>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block"><p className="text-sm font-bold text-emerald-400">Connecté(e)</p><p className="text-sm font-bold">{loggedInUser.nomComplet} ({loggedInUser.role})</p></div>
@@ -658,9 +709,10 @@ const ClinicDashboard: React.FC = () => {
                      )}
 
                      {isAdminCameraActive && (
-                       <div className="w-full max-w-sm mx-auto bg-white p-2 rounded-xl shadow-inner border border-slate-300">
-                         <div id="admin-reader" className="w-full"></div>
-                         <p className="text-center text-xs text-slate-500 mt-2">Placez le code-barre devant la caméra (Arrière)</p>
+                       <div className="w-full max-w-sm mx-auto bg-white p-2 rounded-xl shadow-inner border border-slate-300 relative">
+                         <button onClick={() => setIsAdminCameraActive(false)} className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded z-10"><X size={16}/></button>
+                         <div id="admin-reader" className="w-full min-h-[200px]"></div>
+                         <p className="text-center text-xs text-slate-500 mt-2">Placez le code-barre devant la caméra</p>
                        </div>
                      )}
                    </div>
@@ -713,7 +765,7 @@ const ClinicDashboard: React.FC = () => {
               {adminSubTab === 'rapports' && (
                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col w-full overflow-hidden">
                   <div className="p-4 md:p-6 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
-                    <h3 className="font-bold flex items-center gap-2"><FileBarChart size={20}/> Historique</h3>
+                    <h3 className="font-bold flex items-center gap-2"><FileBarChart size={20}/> Historique (Synchronisé)</h3>
                     <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto"><button onClick={exporterExcel} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 w-full sm:w-auto"><Download size={16}/> Exporter Excel</button><button onClick={exporterPDF} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 w-full sm:w-auto"><FileText size={16}/> Enregistrer PDF</button></div>
                   </div>
                   <div className="w-full overflow-x-auto p-4 md:p-6">
@@ -927,7 +979,8 @@ const ClinicDashboard: React.FC = () => {
                     </div>
 
                     {isCameraActive && (
-                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500 w-full mx-auto">
+                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500 w-full mx-auto relative">
+                        <button onClick={() => setIsCameraActive(false)} className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded z-10"><X size={16}/></button>
                         <div id="reader" className="w-full min-h-[200px]"></div>
                         <p className="text-white text-xs text-center p-2">Patient ou Produit (Caméra arrière)</p>
                       </div>
@@ -987,7 +1040,7 @@ const ClinicDashboard: React.FC = () => {
                         <h3 className="text-slate-800 font-bold mb-4 flex items-center gap-2"><Search size={20}/> Aperçu du ticket</h3>
                         
                         <div className="bg-white p-4 w-[58mm] min-h-[100mm] shadow-lg mb-6 font-mono text-[10px] text-black border border-slate-300 mx-auto">
-                          <div className="text-center font-bold text-sm mb-1">ONG SANTE PLUS</div>
+                          <div className="text-center font-bold text-sm mb-1">Clinique Ong Grenier</div>
                           <div className="text-center mb-1">Reçu de Caisse</div>
                           <div className="text-center text-[8px]">Le {recuApercu.date} à {recuApercu.heure}</div>
                           <div className="border-t border-dashed border-black my-2"></div>
