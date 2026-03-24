@@ -17,6 +17,7 @@ import {
 // ============================================================================
 // CONFIGURATION FIREBASE
 // ============================================================================
+// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyBmeFkD6L_U9eYymnO8rBGddUisJb0ysqA",
   authDomain: "onggrenier.firebaseapp.com",
@@ -43,7 +44,7 @@ interface User { id: string; username: string; mdp: string; role: Role; nomCompl
 interface ConstantesVitales { sys: number; dia: number; temp: number; poids: number; }
 interface Medicament { id: string; codeBarre: string; nom: string; stock: number; prix: number; }
 interface LignePanier { medicament: Medicament; quantite: number; }
-interface LigneOrdonnance { medicament: Medicament; quantite: number; } // NOUVEAU: Quantité dans l'ordonnance
+interface LigneOrdonnance { medicament: Medicament; quantite: number; }
 interface RapportVente { id: string; patientNom: string; montant: number; heure: string; date: string; detailsPanier: LignePanier[]; }
 
 interface Patient {
@@ -122,20 +123,29 @@ const ClinicDashboard: React.FC = () => {
     }
   }, [activeTab, recuApercu, isCameraActive]);
 
-  // Logique du Scanner avec la caméra (Pharmacie) - Caméra arrière forcée
+  // Logique du Scanner avec la caméra (Pharmacie)
   useEffect(() => {
     let html5QrcodeScanner: Html5QrcodeScanner | null = null;
     if (isCameraActive) {
-      html5QrcodeScanner = new Html5QrcodeScanner(
-        "reader", { fps: 10, qrbox: { width: 250, height: 250 }, videoConstraints: { facingMode: "environment" } }, false
-      );
-      html5QrcodeScanner.render(
-        (decodedText) => {
-          handleTraitementScan(decodedText);
-          setIsCameraActive(false); 
-        },
-        (error) => { /* Ignorer les erreurs de frame vide */ }
-      );
+      // Un setTimeout garantit que la div #reader est bien injectée dans le DOM avant d'initialiser
+      setTimeout(() => {
+        const element = document.getElementById("reader");
+        if (element) {
+          html5QrcodeScanner = new Html5QrcodeScanner(
+            "reader", 
+            { fps: 10, qrbox: { width: 250, height: 250 }, videoConstraints: { facingMode: "environment" } }, 
+            false
+          );
+          html5QrcodeScanner.render(
+            (decodedText) => {
+              handleTraitementScan(decodedText);
+              if (html5QrcodeScanner) html5QrcodeScanner.clear();
+              setIsCameraActive(false); 
+            },
+            (error) => { /* Ignorer les erreurs de frame vide */ }
+          );
+        }
+      }, 100);
     }
     return () => {
       if (html5QrcodeScanner) html5QrcodeScanner.clear().catch(e => console.error(e));
@@ -146,16 +156,24 @@ const ClinicDashboard: React.FC = () => {
   useEffect(() => {
     let html5QrcodeScanner: Html5QrcodeScanner | null = null;
     if (isAdminCameraActive) {
-      html5QrcodeScanner = new Html5QrcodeScanner(
-        "admin-reader", { fps: 10, qrbox: { width: 250, height: 100 }, videoConstraints: { facingMode: "environment" } }, false
-      );
-      html5QrcodeScanner.render(
-        (decodedText) => {
-          setNewProduct({...newProduct, codeBarre: decodedText});
-          setIsAdminCameraActive(false);
-        },
-        (error) => { /* Ignorer les erreurs de frame vide */ }
-      );
+      setTimeout(() => {
+        const element = document.getElementById("admin-reader");
+        if (element) {
+          html5QrcodeScanner = new Html5QrcodeScanner(
+            "admin-reader", 
+            { fps: 10, qrbox: { width: 250, height: 100 }, videoConstraints: { facingMode: "environment" } }, 
+            false
+          );
+          html5QrcodeScanner.render(
+            (decodedText) => {
+              setNewProduct({...newProduct, codeBarre: decodedText});
+              if (html5QrcodeScanner) html5QrcodeScanner.clear();
+              setIsAdminCameraActive(false);
+            },
+            (error) => { /* Ignorer les erreurs de frame vide */ }
+          );
+        }
+      }, 100);
     }
     return () => {
       if (html5QrcodeScanner) html5QrcodeScanner.clear().catch(e => console.error(e));
@@ -168,7 +186,9 @@ const ClinicDashboard: React.FC = () => {
     if (!db) return;
     try {
       await setDoc(doc(db, colName, docId), data, { merge: true });
-    } catch (e) { console.error("Erreur de sync Firebase:", e); }
+    } catch (e) { 
+      console.error("Erreur de sync Firebase (Mode hors ligne conservé):", e); 
+    }
   };
 
 
@@ -258,7 +278,7 @@ const ClinicDashboard: React.FC = () => {
     syncToFirebase('patients', patientAjourne.id, patientAjourne);
   };
 
-  // --- FONCTIONS MÉTIER MEDECIN (Avec Quantités) ---
+  // --- FONCTIONS MÉTIER MEDECIN ---
   const handleToggleOrdonnance = (med: Medicament) => {
     const existant = ordonnance.find(o => o.medicament.id === med.id);
     if (existant) {
@@ -298,7 +318,7 @@ const ClinicDashboard: React.FC = () => {
 
   const annulerOrdonnance = () => { setOrdonnance([]); };
 
-  // --- FONCTIONS MÉTIER PHARMACIE ---
+  // --- FONCTIONS MÉTIER PHARMACIE / CAISSE ---
   const handleTraitementScan = (code: string) => {
     setMessageErreur('');
     if (code.startsWith('DOS-')) {
@@ -321,7 +341,26 @@ const ClinicDashboard: React.FC = () => {
     setCodeSaisi(''); 
   };
 
+  // NOUVEAU: Fonction pour modifier la quantité directement dans le panier du client
+  const updateQuantitePanier = (idMed: string, delta: number) => {
+    setPanier(panier.map(l => {
+      if (l.medicament.id === idMed) {
+        const nouvelleQte = l.quantite + delta;
+        // On s'assure de ne pas descendre sous 1, et de ne pas dépasser le stock
+        if (nouvelleQte < 1) return l;
+        if (nouvelleQte > l.medicament.stock) {
+          setMessageErreur(`Stock maximum atteint pour ${l.medicament.nom}`);
+          return l;
+        }
+        setMessageErreur('');
+        return { ...l, quantite: nouvelleQte };
+      }
+      return l;
+    }));
+  };
+
   const validerPaiement = () => {
+    // 1. Déduction des stocks
     const newMeds = medicaments.map(med => {
       const ligne = panier.find(l => l.medicament.id === med.id);
       if (ligne) {
@@ -333,6 +372,7 @@ const ClinicDashboard: React.FC = () => {
     });
     setMedicaments(newMeds);
     
+    // 2. Création de la transaction pour le Rapport Responsable
     const montantTotal = panier.reduce((sum, l) => sum + (l.medicament.prix * l.quantite), 0);
     const dateActuelle = new Date();
     const nouvelleTransaction: RapportVente = {
@@ -344,15 +384,19 @@ const ClinicDashboard: React.FC = () => {
       detailsPanier: [...panier] 
     };
     
+    // Ajout local IMMEDIAT (garantit que l'Admin le voit même si Firebase échoue)
     setHistoriqueVentes([nouvelleTransaction, ...historiqueVentes]);
     syncToFirebase('ventes', nouvelleTransaction.id, nouvelleTransaction);
     
+    // 3. Mise à jour du statut patient
     if (selectedPatientPharmacie) {
       const patientAjourne = { ...selectedPatientPharmacie, statut: 'Terminé' as const };
       setPatients(patients.map(p => p.id === selectedPatientPharmacie.id ? patientAjourne : p));
       setSelectedPatientPharmacie(null);
       syncToFirebase('patients', patientAjourne.id, patientAjourne);
     }
+    
+    // 4. Nettoyage et Affichage Reçu
     setPanier([]);
     setRecuApercu(nouvelleTransaction);
   };
@@ -520,7 +564,7 @@ const ClinicDashboard: React.FC = () => {
   }
 
   return (
-    <div className="h-[100dvh] flex flex-col bg-slate-50 font-sans overflow-hidden">
+    <div className="h-[100dvh] flex flex-col bg-slate-50 font-sans overflow-x-hidden">
       {/* HEADER RESPONSIVE */}
       <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-30 relative shrink-0">
         <div className="flex items-center gap-3">
@@ -536,7 +580,7 @@ const ClinicDashboard: React.FC = () => {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden relative">
+      <div className="flex flex-1 overflow-hidden relative w-full">
         {/* SIDEBAR RESPONSIVE */}
         <aside className={`${isMobileMenuOpen ? 'flex' : 'hidden'} md:flex flex-col w-64 bg-white border-r border-slate-200 py-6 absolute md:relative z-20 h-full shadow-xl md:shadow-none transition-all`}>
           <nav className="flex flex-col gap-2 px-4">
@@ -554,11 +598,11 @@ const ClinicDashboard: React.FC = () => {
 
           {/* === MODULE 0: ADMIN === */}
           {activeTab === 'admin' && (
-            <div className="max-w-6xl mx-auto flex flex-col h-full">
+            <div className="max-w-6xl mx-auto flex flex-col h-full w-full">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 gap-4">
                 <div><h2 className="text-2xl md:text-3xl font-bold text-slate-800">Espace Administrateur</h2></div>
               </div>
-              <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-2 w-full">
+              <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-2 overflow-x-auto w-full">
                 <button onClick={() => setAdminSubTab('stats')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'stats' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Tableau de bord</button>
                 <button onClick={() => setAdminSubTab('stock')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'stock' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Stock Pharmacie</button>
                 <button onClick={() => setAdminSubTab('personnel')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'personnel' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Personnel</button>
@@ -566,7 +610,7 @@ const ClinicDashboard: React.FC = () => {
               </div>
 
               {adminSubTab === 'stats' && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 w-full">
                   <div className="bg-white p-6 rounded-2xl border flex items-center gap-4"><div className="bg-blue-100 p-4 rounded-xl text-blue-600"><Users size={24} /></div><div><p className="text-sm font-bold text-slate-500 uppercase">Patients du jour</p><p className="text-3xl font-black">{patients.length}</p></div></div>
                   <div className="bg-white p-6 rounded-2xl border flex items-center gap-4"><div className="bg-emerald-100 p-4 rounded-xl text-emerald-600"><TrendingUp size={24} /></div><div><p className="text-sm font-bold text-slate-500 uppercase">Revenus (FCFA)</p><p className="text-3xl font-black">{historiqueVentes.reduce((acc, v) => acc + v.montant, 0).toLocaleString()}</p></div></div>
                   <div className="bg-white p-6 rounded-2xl border border-red-200 flex items-center gap-4"><div className="bg-red-100 p-4 rounded-xl text-red-600"><AlertTriangle size={24} /></div><div><p className="text-sm font-bold text-slate-500 uppercase">Alertes Stocks</p><p className="text-3xl font-black text-red-600">{medicaments.filter(m => m.stock < 10).length}</p></div></div>
@@ -574,7 +618,7 @@ const ClinicDashboard: React.FC = () => {
               )}
 
               {adminSubTab === 'stock' && (
-                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col overflow-hidden">
+                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col w-full overflow-hidden">
                  <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
                    <h3 className="font-bold flex items-center gap-2"><Package size={20}/> Base de médicaments</h3>
                    <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-3">
@@ -587,7 +631,7 @@ const ClinicDashboard: React.FC = () => {
                  </div>
                  
                  {showAddProduct && (
-                   <div className="p-5 bg-blue-50 border-b flex flex-col gap-4">
+                   <div className="p-5 bg-blue-50 border-b flex flex-col gap-4 w-full">
                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
                        <div className="md:col-span-3"><label className="text-xs font-bold text-slate-500">Nom</label><input type="text" value={newProduct.nom || ''} onChange={e => setNewProduct({...newProduct, nom: e.target.value})} className="w-full p-2.5 border rounded-lg" /></div>
                        <div className="md:col-span-4">
@@ -645,7 +689,7 @@ const ClinicDashboard: React.FC = () => {
               )}
 
               {adminSubTab === 'personnel' && (
-                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col overflow-hidden">
+                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col w-full overflow-hidden">
                  <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4"><h3 className="font-bold flex items-center gap-2"><UserPlus size={20}/> Utilisateurs</h3><button onClick={() => setShowAddUser(!showAddUser)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold w-full sm:w-auto">Créer un compte</button></div>
                  {showAddUser && (
                     <div className="p-4 bg-blue-50 border-b grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 items-end">
@@ -666,7 +710,7 @@ const ClinicDashboard: React.FC = () => {
               )}
 
               {adminSubTab === 'rapports' && (
-                <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col overflow-hidden">
+                <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col w-full overflow-hidden">
                   <div className="p-4 md:p-6 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
                     <h3 className="font-bold flex items-center gap-2"><FileBarChart size={20}/> Historique</h3>
                     <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto"><button onClick={exporterExcel} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 w-full sm:w-auto"><Download size={16}/> Exporter Excel</button><button onClick={exporterPDF} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 w-full sm:w-auto"><FileText size={16}/> Enregistrer PDF</button></div>
@@ -684,11 +728,11 @@ const ClinicDashboard: React.FC = () => {
 
           {/* === MODULE 1: ACCUEIL === */}
           {activeTab === 'accueil' && (
-             <div className="max-w-4xl mx-auto h-full overflow-y-auto">
+             <div className="max-w-4xl mx-auto h-full overflow-y-auto w-full">
               <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-2">Accueil & Enregistrement</h2>
               <p className="text-slate-500 mb-6 md:mb-8 text-sm md:text-base">Génération automatique des dossiers, tickets d'attente et QR Codes</p>
 
-              <div className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 shadow-sm w-full">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 mb-6">
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Nom complet du patient</label>
@@ -739,10 +783,10 @@ const ClinicDashboard: React.FC = () => {
 
           {/* === MODULE 2: INFIRMERIE === */}
           {activeTab === 'triage' && (
-             <div className="h-full flex flex-col">
+             <div className="h-full flex flex-col w-full">
                <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Infirmerie - Triage</h2>
-               <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6 flex-1 min-h-0">
-                 <div className="lg:col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full">
+               <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6 flex-1 min-h-0 w-full">
+                 <div className="lg:col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full w-full">
                    <h3 className="font-bold mb-4 flex items-center gap-2"><Clock size={18} className="text-blue-500"/> Patients en attente</h3>
                    {patients.filter(p => p.statut === 'Triage').map(patient => (
                      <div key={patient.id} onClick={() => setSelectedPatientTriage(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 transition-all ${selectedPatientTriage?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
@@ -750,7 +794,7 @@ const ClinicDashboard: React.FC = () => {
                      </div>
                    ))}
                  </div>
-                 <div className="lg:col-span-2 bg-white border rounded-2xl p-4 md:p-6 shadow-sm overflow-y-auto">
+                 <div className="lg:col-span-2 bg-white border rounded-2xl p-4 md:p-6 shadow-sm overflow-y-auto w-full">
                    {selectedPatientTriage ? (
                      <>
                         <h3 className="text-lg md:text-xl font-bold mb-4 md:mb-6 border-b pb-4">Prise de constantes : {selectedPatientTriage.nom}</h3>
@@ -770,10 +814,10 @@ const ClinicDashboard: React.FC = () => {
 
           {/* === MODULE 3: MÉDECIN === */}
           {activeTab === 'medecin' && (
-            <div className="h-full flex flex-col">
+            <div className="h-full flex flex-col w-full">
               <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Bureau du Médecin</h2>
-              <div className="flex flex-col lg:grid lg:grid-cols-4 gap-6 flex-1 min-h-0">
-                <div className="lg:col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full">
+              <div className="flex flex-col lg:grid lg:grid-cols-4 gap-6 flex-1 min-h-0 w-full">
+                <div className="lg:col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full w-full">
                   <h3 className="font-bold mb-4 flex items-center gap-2"><Users size={18} className="text-blue-500"/> Salle d'attente</h3>
                   {patients.filter(p => p.statut === 'Consultation').map(patient => (
                     <div key={patient.id} onClick={() => setSelectedPatientMed(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 ${selectedPatientMed?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
@@ -782,16 +826,16 @@ const ClinicDashboard: React.FC = () => {
                   ))}
                 </div>
 
-                <div className="lg:col-span-3 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden">
+                <div className="lg:col-span-3 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden w-full">
                   {selectedPatientMed ? (
                     <div className="flex-1 flex flex-col overflow-y-auto">
                       <div className="bg-slate-900 text-white p-4 md:p-6"><h2 className="text-xl md:text-2xl font-bold">{selectedPatientMed.nom}</h2><p className="text-slate-400 font-mono text-sm">Dossier N° {selectedPatientMed.id}</p></div>
-                      <div className="p-4 md:p-6 flex flex-col lg:grid lg:grid-cols-2 gap-6 flex-1">
+                      <div className="p-4 md:p-6 flex flex-col lg:grid lg:grid-cols-2 gap-6 flex-1 w-full">
                         <div className="flex flex-col gap-4">
                           <div><label className="text-sm font-bold text-slate-700 mb-2 block">Notes Cliniques</label><textarea className="w-full p-4 border rounded-xl h-32 md:h-40 outline-none focus:border-blue-400" value={notesCliniques} onChange={e => setNotesCliniques(e.target.value)} /></div>
                           <div><label className="text-sm font-bold text-slate-700 mb-2 block">Diagnostic Retenu</label><input type="text" className="w-full p-4 border rounded-xl font-bold outline-none focus:border-blue-400" value={diagnostic} onChange={e => setDiagnostic(e.target.value)} /></div>
                         </div>
-                        <div className="bg-blue-50 rounded-2xl p-4 md:p-5 flex flex-col border border-blue-100 min-h-[300px]">
+                        <div className="bg-blue-50 rounded-2xl p-4 md:p-5 flex flex-col border border-blue-100 min-h-[300px] w-full">
                           <div className="flex justify-between items-center mb-3">
                             <h4 className="font-bold text-blue-900 flex items-center gap-2"><Pill size={18}/> Ordonnance</h4>
                             <span className="text-xs bg-blue-200 text-blue-800 px-2 py-1 rounded hidden sm:block">Prix transparents</span>
@@ -814,22 +858,19 @@ const ClinicDashboard: React.FC = () => {
                             })}
                             {filteredMedecinStock.length === 0 && <p className="text-xs text-slate-400 text-center py-2">Aucun médicament trouvé.</p>}
                           </div>
-                          <div className="bg-white border rounded-xl p-4 flex-1 flex flex-col">
-                            
-                            {/* NOUVEAU: Liste d'ordonnance avec gestion des quantités (Médecin) */}
+                          <div className="bg-white border rounded-xl p-4 flex-1 flex flex-col w-full">
                             <ul className="list-none p-0 m-0 text-sm font-bold text-slate-700 mb-4 flex-1 overflow-y-auto">
                               {ordonnance.map(o => (
-                                <li key={o.medicament.id} className="flex justify-between items-center bg-slate-50 p-2 rounded-lg mb-2 border border-slate-200">
+                                <li key={o.medicament.id} className="flex flex-col sm:flex-row sm:justify-between sm:items-center bg-slate-50 p-2 rounded-lg mb-2 border border-slate-200 gap-2">
                                   <span className="truncate flex-1">{o.medicament.nom}</span>
-                                  <div className="flex items-center gap-2">
-                                    <button onClick={() => updateQuantiteOrdonnance(o.medicament.id, -1)} className="bg-slate-200 px-2 py-1 rounded text-slate-700 hover:bg-slate-300">-</button>
-                                    <span className="w-4 text-center">{o.quantite}</span>
-                                    <button onClick={() => updateQuantiteOrdonnance(o.medicament.id, 1)} className="bg-slate-200 px-2 py-1 rounded text-slate-700 hover:bg-slate-300">+</button>
+                                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                                    <button onClick={() => updateQuantiteOrdonnance(o.medicament.id, -1)} className="bg-slate-200 px-3 py-1 rounded text-slate-700 hover:bg-slate-300">-</button>
+                                    <span className="w-6 text-center">{o.quantite}</span>
+                                    <button onClick={() => updateQuantiteOrdonnance(o.medicament.id, 1)} className="bg-slate-200 px-3 py-1 rounded text-slate-700 hover:bg-slate-300">+</button>
                                   </div>
                                 </li>
                               ))}
                             </ul>
-
                             <div className="mt-auto pt-3 border-t flex justify-between items-end"><span className="text-sm text-slate-500 font-bold">Total estimé :</span><span className="text-xl md:text-2xl font-black text-blue-600">{totalOrdonnance.toLocaleString()} F</span></div>
                           </div>
                         </div>
@@ -847,11 +888,11 @@ const ClinicDashboard: React.FC = () => {
 
           {/* === MODULE 4: PHARMACIE === */}
           {activeTab === 'pharmacie' && (
-            <div className="h-full flex flex-col relative">
+            <div className="h-full flex flex-col relative w-full">
               <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Caisse Pharmacie</h2>
-              <div className="flex flex-col lg:grid lg:grid-cols-4 gap-6 flex-1 min-h-0">
+              <div className="flex flex-col lg:grid lg:grid-cols-4 gap-6 flex-1 min-h-0 w-full">
                 
-                <div className="lg:col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full">
+                <div className="lg:col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full w-full">
                   <h3 className="font-bold mb-4 flex items-center gap-2"><Users size={18}/> Patients envoyés</h3>
                   {patients.filter(p => p.statut === 'Pharmacie').map(patient => (
                     <div key={patient.id} onClick={() => setSelectedPatientPharmacie(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 transition-all ${selectedPatientPharmacie?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
@@ -861,13 +902,12 @@ const ClinicDashboard: React.FC = () => {
                   ))}
                 </div>
 
-                <div className="lg:col-span-1 bg-white border rounded-2xl p-4 md:p-6 shadow-sm flex flex-col overflow-y-auto">
+                <div className="lg:col-span-1 bg-white border rounded-2xl p-4 md:p-6 shadow-sm flex flex-col overflow-y-auto w-full">
                   {selectedPatientPharmacie ? (
                     <div className="mb-6 p-4 md:p-5 bg-yellow-50 border border-yellow-200 rounded-xl shadow-inner">
                       <h4 className="text-xs font-black text-yellow-800 uppercase mb-3 flex items-center gap-2"><FileText size={16}/> À délivrer :</h4>
                       <ul className="text-sm font-bold text-slate-800 space-y-2">
                         {selectedPatientPharmacie.ordonnance?.map(o => (
-                          // NOUVEAU: Affichage des quantités prescrites
                           <li key={o.medicament.id} className="flex items-start gap-2">
                             <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 mt-1.5 shrink-0"></div>
                             <span><span className="text-blue-600">{o.quantite}x</span> {o.medicament.nom}</span>
@@ -886,9 +926,9 @@ const ClinicDashboard: React.FC = () => {
                     </div>
 
                     {isCameraActive && (
-                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500 w-full max-w-sm mx-auto">
-                        <div id="reader" className="w-full"></div>
-                        <p className="text-white text-xs text-center p-2">Caméra active - Pointez vers un code (Arrière)</p>
+                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500 w-full mx-auto">
+                        <div id="reader" className="w-full min-h-[200px]"></div>
+                        <p className="text-white text-xs text-center p-2">Patient ou Produit (Caméra arrière)</p>
                       </div>
                     )}
 
@@ -907,15 +947,21 @@ const ClinicDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="lg:col-span-2 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden relative">
+                <div className="lg:col-span-2 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden relative w-full">
                   <div className="flex-1 p-4 md:p-6 overflow-y-auto bg-slate-50/50">
                     {panier.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-slate-300 py-12"><Scan size={64} className="mb-4 opacity-20" /><p className="text-slate-500 font-medium">Scannez un produit pour l'ajouter</p></div> : (
                       <div className="flex flex-col gap-3">
                         {panier.map((ligne, i) => (
                           <div key={i} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 bg-white rounded-xl border border-slate-200 shadow-sm gap-4">
                             <div className="min-w-0 flex-1"><h4 className="font-bold text-slate-800 truncate">{ligne.medicament.nom}</h4><p className="text-xs text-slate-400 font-mono mt-1">Ref: {ligne.medicament.codeBarre}</p></div>
-                            <div className="flex items-center gap-4 sm:gap-6 w-full sm:w-auto justify-between sm:justify-end">
-                              <div className="text-center"><p className="text-xs text-slate-400">Qté</p><p className="font-bold">x{ligne.quantite}</p></div>
+                            
+                            {/* NOUVEAU: Modification des quantités par la caissière */}
+                            <div className="flex items-center gap-4 sm:gap-6 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-3 sm:pt-0 mt-2 sm:mt-0">
+                              <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
+                                <button onClick={() => updateQuantitePanier(ligne.medicament.id, -1)} className="bg-white px-2 py-1 rounded shadow-sm text-slate-700 font-bold hover:bg-slate-200">-</button>
+                                <span className="w-6 text-center font-bold text-slate-800">{ligne.quantite}</span>
+                                <button onClick={() => updateQuantitePanier(ligne.medicament.id, 1)} className="bg-white px-2 py-1 rounded shadow-sm text-slate-700 font-bold hover:bg-slate-200">+</button>
+                              </div>
                               <div className="text-right w-24"><p className="text-xs text-slate-400">Prix</p><p className="font-bold text-blue-600">{(ligne.medicament.prix * ligne.quantite).toLocaleString()} F</p></div>
                               <button onClick={() => setPanier(panier.filter(l => l.medicament.id !== ligne.medicament.id))} className="text-red-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-lg"><Trash2 size={20}/></button>
                             </div>
