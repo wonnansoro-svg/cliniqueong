@@ -78,7 +78,7 @@ const ClinicDashboard: React.FC = () => {
   const [panier, setPanier] = useState<LignePanier[]>([]);
   const [codeSaisi, setCodeSaisi] = useState('');
   const [messageErreur, setMessageErreur] = useState('');
-  const [recuApercu, setRecuApercu] = useState<RapportVente | null>(null); // NOUVEAU: Pour l'aperçu du reçu
+  const [recuApercu, setRecuApercu] = useState<RapportVente | null>(null); 
   const inputScanRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -117,7 +117,6 @@ const ClinicDashboard: React.FC = () => {
     setPatients([...patients, newPatient]); setTicketGenere(newPatient); setNouveauNom('');
   };
 
-  // NOUVEAU : Impression du ticket d'accueil pour le patient
   const imprimerTicketAccueil = () => {
     if (!ticketGenere) return;
     const printWindow = window.open('', '_blank', 'width=300,height=500');
@@ -130,7 +129,7 @@ const ClinicDashboard: React.FC = () => {
         .ticket-num { font-size: 28px; margin: 10px 0; border: 2px solid #000; padding: 5px; }
         .qr-img { width: 120px; height: 120px; margin: 10px auto; }
       </style></head><body>
-        <div class="bold" style="font-size:16px;">ONG SANTE PLUS</div>
+        <div class="bold" style="font-size:16px;">Clinique ONG Notre Grenier</div>
         <div style="font-size:12px; margin-bottom: 10px;">${new Date().toLocaleDateString()} - ${ticketGenere.heureArrivee}</div>
         <div>Ticket d'attente</div>
         <div class="ticket-num bold">${ticketGenere.ticket}</div>
@@ -214,7 +213,6 @@ const ClinicDashboard: React.FC = () => {
     }
     setPanier([]);
     
-    // NOUVEAU : On n'imprime plus directement, on affiche l'aperçu
     setRecuApercu(nouvelleTransaction);
   };
 
@@ -222,6 +220,7 @@ const ClinicDashboard: React.FC = () => {
     const printWindow = window.open('', '_blank', 'width=300,height=600');
     if (!printWindow) return;
 
+    // NOUVEAU : Ajout de la balise <img> pour le QR code au centre du ticket imprimé
     const htmlTicket = `
       <html>
         <head>
@@ -233,10 +232,11 @@ const ClinicDashboard: React.FC = () => {
             .flex { display: flex; justify-content: space-between; }
             .divider { border-top: 1px dashed #000; margin: 5px 0; }
             .item-row { margin-bottom: 3px; }
+            .qr-code { width: 100px; height: 100px; margin: 10px auto; display: block; }
           </style>
         </head>
         <body>
-          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">ONG SANTE PLUS</div>
+          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">Clinique ONG Notre Grenier</div>
           <div class="center">Reçu de Caisse</div>
           <div class="center" style="font-size:10px;">Le ${transaction.date} à ${transaction.heure}</div>
           <div class="divider"></div>
@@ -255,14 +255,17 @@ const ClinicDashboard: React.FC = () => {
           <div class="divider"></div>
           <div class="flex bold" style="font-size: 14px;"><span>TOTAL NET:</span><span>${transaction.montant} F</span></div>
           <div class="divider"></div>
-          <div class="center" style="margin-top:10px; font-size:10px;">Bonne guérison !</div>
+          
+          <img class="qr-code" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${transaction.id}" alt="QR Code Reçu" />
+          
+          <div class="center" style="margin-top:5px; font-size:10px;">Bonne guérison !</div>
           <script>window.onload = function() { window.print(); window.close(); }</script>
         </body>
       </html>
     `;
     printWindow.document.write(htmlTicket);
     printWindow.document.close();
-    setRecuApercu(null); // On ferme l'aperçu après impression
+    setRecuApercu(null); 
   };
 
   // --- FONCTIONS ADMIN & EXPORT ---
@@ -308,7 +311,7 @@ const ClinicDashboard: React.FC = () => {
     if (!printWindow) return;
     let html = `<html><head><title>Rapport Financier</title>
       <style>body { font-family: Arial; padding: 20px; } table { border-collapse: collapse; width: 100%; margin-top: 20px;} th, td { border: 1px solid #ccc; padding: 10px; text-align: left; } th { background-color: #f0f0f0; } .total { font-weight: bold; font-size: 1.2em; margin-top: 20px; text-align: right;}</style></head><body>
-      <h2>Rapport des Encaissements - ONG SANTE PLUS</h2><p>Date : ${new Date().toLocaleDateString()}</p>
+      <h2>Rapport des Encaissements - Clinique ONG Notre Grenier</h2><p>Date : ${new Date().toLocaleDateString()}</p>
       <table><tr><th>Ref Facture</th><th>Date/Heure</th><th>Patient</th><th>Montant (FCFA)</th></tr>`;
     let total = 0;
     historiqueVentes.forEach(v => {
@@ -324,11 +327,10 @@ const ClinicDashboard: React.FC = () => {
   if (!loggedInUser) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
-        {/* ... (Code de connexion identique au précédent) ... */}
         <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
           <div className="text-center mb-8">
             <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30"><ShieldPlus size={32} className="text-white" /></div>
-            <h1 className="text-2xl font-black text-slate-800 tracking-tight">ONG SANTE PLUS</h1>
+            <h1 className="text-2xl font-black text-slate-800 tracking-tight">Clinique ONG Notre Grenier</h1>
             <p className="text-slate-500 text-sm mt-1">Portail de Gestion Sécurisé</p>
           </div>
           <form onSubmit={handleLogin} className="flex flex-col gap-4">
@@ -349,7 +351,7 @@ const ClinicDashboard: React.FC = () => {
     <div className="h-screen flex flex-col bg-slate-50 font-sans">
       {/* HEADER */}
       <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-10">
-        <div className="flex items-center gap-3"><div className="bg-blue-500 p-2 rounded-lg"><ShieldPlus size={24} className="text-white" /></div><h1 className="text-xl font-bold hidden sm:block">ONG SANTE PLUS</h1></div>
+        <div className="flex items-center gap-3"><div className="bg-blue-500 p-2 rounded-lg"><ShieldPlus size={24} className="text-white" /></div><h1 className="text-xl font-bold hidden sm:block">Clinique ONG Notre Grenier</h1></div>
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block"><p className="text-sm font-bold text-emerald-400">Connecté(e)</p><p className="text-sm font-bold">{loggedInUser.nomComplet} ({loggedInUser.role})</p></div>
           <button onClick={handleLogout} className="bg-slate-800 hover:bg-red-500 p-2.5 rounded-xl border border-slate-700 text-slate-300"><LogOut size={18} /></button>
@@ -371,9 +373,8 @@ const ClinicDashboard: React.FC = () => {
         {/* MAIN CONTENT */}
         <main className="flex-1 p-8 overflow-y-auto bg-slate-50 relative">
 
-          {/* ... (MODULE 0: ADMIN identique) ... */}
+          {/* === MODULE 0: ADMIN === */}
           {activeTab === 'admin' && (
-            // (J'ai conservé le module Admin identique à la version précédente pour respecter la consigne de ne rien enlever)
             <div className="max-w-6xl mx-auto flex flex-col h-full">
               <div className="flex justify-between items-end mb-8">
                 <div><h2 className="text-3xl font-bold text-slate-800">Espace Administrateur</h2></div>
@@ -487,7 +488,6 @@ const ClinicDashboard: React.FC = () => {
                     </div>
                     <div className="p-8 text-center -mt-6">
                       <div className="bg-white rounded-2xl shadow-lg p-4 mb-6 mx-auto inline-block border border-slate-100">
-                        {/* NOUVEAU: Génération d'image QR fiable sans librairie via API */}
                         <img 
                           src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${ticketGenere.id}`} 
                           alt="QR Code Patient" 
@@ -499,7 +499,6 @@ const ClinicDashboard: React.FC = () => {
                     </div>
                     <div className="p-4 bg-slate-50 flex gap-3 border-t border-slate-100">
                       <button onClick={() => setTicketGenere(null)} className="flex-1 bg-white border border-slate-200 text-slate-700 py-3 rounded-xl font-bold hover:bg-slate-100">Fermer</button>
-                      {/* NOUVEAU: Impression fonctionnelle pour le ticket d'attente */}
                       <button onClick={imprimerTicketAccueil} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 flex items-center justify-center gap-2"><Printer size={18} /> Imprimer</button>
                     </div>
                   </div>
@@ -657,21 +656,19 @@ const ClinicDashboard: React.FC = () => {
                       <p className="text-slate-400 font-medium text-lg">Net à payer</p>
                       <p className="text-5xl font-black text-emerald-400">{panier.reduce((t, l) => t + (l.medicament.prix * l.quantite), 0).toLocaleString()} <span className="text-2xl text-emerald-600">FCFA</span></p>
                     </div>
-                    {/* NOUVEAU: Le bouton génère désormais l'aperçu avant l'impression */}
                     <button onClick={validerPaiement} disabled={panier.length === 0} className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-white p-5 rounded-xl font-bold flex justify-center items-center gap-3 text-lg transition-all">
                       <CheckCircle2 size={24} /> Valider l'Encaissement
                     </button>
                   </div>
 
-                  {/* NOUVEAU: APERÇU DU REÇU (Modal interne) */}
+                  {/* APERÇU DU REÇU (Modal interne de la Pharmacie) */}
                   {recuApercu && (
                     <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                       <div className="bg-slate-100 p-6 rounded-2xl shadow-2xl flex flex-col items-center">
                         <h3 className="text-slate-800 font-bold mb-4 flex items-center gap-2"><Search size={20}/> Aperçu du ticket 58mm</h3>
                         
-                        {/* Simulation visuelle du ticket thermique */}
                         <div className="bg-white p-4 w-[58mm] min-h-[100mm] shadow-lg mb-6 font-mono text-[10px] text-black border border-slate-300">
-                          <div className="text-center font-bold text-sm mb-1">ONG SANTE PLUS</div>
+                          <div className="text-center font-bold text-sm mb-1">Clinique ONG Notre Grenier</div>
                           <div className="text-center mb-1">Reçu de Caisse</div>
                           <div className="text-center text-[8px]">Le {recuApercu.date} à {recuApercu.heure}</div>
                           <div className="border-t border-dashed border-black my-2"></div>
@@ -690,12 +687,22 @@ const ClinicDashboard: React.FC = () => {
                           <div className="border-t border-dashed border-black my-2"></div>
                           <div className="flex justify-between font-bold text-xs"><span>TOTAL NET:</span><span>{recuApercu.montant} F</span></div>
                           <div className="border-t border-dashed border-black my-2"></div>
+                          
+                          {/* NOUVEAU: Le QR code intégré à la maquette du reçu de la caisse */}
+                          <div className="flex justify-center my-2">
+                            <img 
+                              src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${recuApercu.id}`} 
+                              alt="QR Code Reçu" 
+                              className="w-16 h-16 object-contain"
+                            />
+                          </div>
+
                           <div className="text-center mt-2 text-[8px]">Bonne guérison !</div>
                         </div>
 
                         <div className="flex gap-3 w-full">
                           <button onClick={() => setRecuApercu(null)} className="flex-1 bg-slate-300 text-slate-800 p-3 rounded-xl font-bold hover:bg-slate-400">Annuler</button>
-                          <button onClick={() => lancerImpressionThermique(recuApercu)} className="flex-1 bg-blue-600 text-white p-3 rounded-xl font-bold hover:bg-blue-700 flex justify-center items-center gap-2"><Printer size={18}/> Lancer l'impression</button>
+                          <button onClick={() => lancerImpressionThermique(recuApercu)} className="flex-1 bg-blue-600 text-white p-3 rounded-xl font-bold hover:bg-blue-700 flex justify-center items-center gap-2"><Printer size={18}/> Imprimer</button>
                         </div>
                       </div>
                     </div>
