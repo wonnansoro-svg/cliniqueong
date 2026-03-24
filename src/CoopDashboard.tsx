@@ -18,12 +18,12 @@ import {
 // CONFIGURATION FIREBASE
 // ============================================================================
 const firebaseConfig = {
-  apiKey: "VOTRE_API_KEY",
-  authDomain: "votre-projet.firebaseapp.com",
-  projectId: "votre-projet",
-  storageBucket: "votre-projet.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
+  apiKey: "AIzaSyBmeFkD6L_U9eYymnO8rBGddUisJb0ysqA",
+  authDomain: "onggrenier.firebaseapp.com",
+  projectId: "onggrenier",
+  storageBucket: "onggrenier.firebasestorage.app",
+  messagingSenderId: "728693944134",
+  appId: "1:728693944134:web:e9d20c5ff05462a0cfff47"
 };
 
 let app: any, auth: any, db: any;
