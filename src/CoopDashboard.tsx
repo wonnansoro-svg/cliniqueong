@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import { 
   Users, Activity, Stethoscope, Pill, 
   Settings, CreditCard, QrCode, Printer,
@@ -7,7 +8,7 @@ import {
   Clock, CheckCircle2, Thermometer, Weight, HeartPulse,
   FileText, PlusCircle, Check,
   BarChart3, Package, TrendingUp, AlertTriangle, Plus,
-  Lock, UserPlus, LogOut, Save, X, FileBarChart, Ban, Download
+  Lock, UserPlus, LogOut, Save, X, FileBarChart, Ban, Download, Menu
 } from 'lucide-react';
 
 // --- TYPES DE DONNÉES ---
@@ -43,6 +44,7 @@ const ClinicDashboard: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'accueil' | 'triage' | 'medecin' | 'pharmacie' | 'admin'>('accueil');
   const [adminSubTab, setAdminSubTab] = useState<'stats' | 'stock' | 'personnel' | 'rapports'>('stats');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // NOUVEAU: Menu Responsive
   
   // --- BASE DE DONNÉES SIMULÉE ---
   const [patients, setPatients] = useState<Patient[]>([
@@ -81,11 +83,59 @@ const ClinicDashboard: React.FC = () => {
   const [recuApercu, setRecuApercu] = useState<RapportVente | null>(null); 
   const inputScanRef = useRef<HTMLInputElement>(null);
 
+  // NOUVEAU: États pour l'utilisation réelle de la caméra
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [isAdminCameraActive, setIsAdminCameraActive] = useState(false);
+
   useEffect(() => {
-    if (activeTab === 'pharmacie' && inputScanRef.current && !recuApercu) {
+    if (activeTab === 'pharmacie' && inputScanRef.current && !recuApercu && !isCameraActive) {
       inputScanRef.current.focus();
     }
-  }, [activeTab, recuApercu]);
+  }, [activeTab, recuApercu, isCameraActive]);
+
+  // NOUVEAU: Logique du Scanner avec la caméra (Pharmacie)
+  useEffect(() => {
+    let html5QrcodeScanner: Html5QrcodeScanner | null = null;
+    if (isCameraActive) {
+      html5QrcodeScanner = new Html5QrcodeScanner(
+        "reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false
+      );
+      html5QrcodeScanner.render(
+        (decodedText) => {
+          handleTraitementScan(decodedText);
+          setIsCameraActive(false); // Désactive la caméra après un scan réussi
+        },
+        (error) => { /* Ignorer les erreurs de frame vide */ }
+      );
+    }
+    return () => {
+      if (html5QrcodeScanner) {
+        html5QrcodeScanner.clear().catch(error => console.error("Failed to clear scanner", error));
+      }
+    };
+  }, [isCameraActive]);
+
+  // NOUVEAU: Logique du Scanner avec la caméra (Admin - Ajout Produit)
+  useEffect(() => {
+    let html5QrcodeScanner: Html5QrcodeScanner | null = null;
+    if (isAdminCameraActive) {
+      html5QrcodeScanner = new Html5QrcodeScanner(
+        "admin-reader", { fps: 10, qrbox: { width: 250, height: 100 } }, false
+      );
+      html5QrcodeScanner.render(
+        (decodedText) => {
+          setNewProduct({...newProduct, codeBarre: decodedText});
+          setIsAdminCameraActive(false);
+        },
+        (error) => { /* Ignorer les erreurs de frame vide */ }
+      );
+    }
+    return () => {
+      if (html5QrcodeScanner) {
+        html5QrcodeScanner.clear().catch(error => console.error("Failed to clear scanner", error));
+      }
+    };
+  }, [isAdminCameraActive]);
 
   // --- FONCTIONS AUTHENTIFICATION ---
   const handleLogin = (e: React.FormEvent) => {
@@ -129,7 +179,7 @@ const ClinicDashboard: React.FC = () => {
         .ticket-num { font-size: 28px; margin: 10px 0; border: 2px solid #000; padding: 5px; }
         .qr-img { width: 120px; height: 120px; margin: 10px auto; }
       </style></head><body>
-        <div class="bold" style="font-size:16px;">Clinique ONG Notre Grenier</div>
+        <div class="bold" style="font-size:16px;">ONG SANTE PLUS</div>
         <div style="font-size:12px; margin-bottom: 10px;">${new Date().toLocaleDateString()} - ${ticketGenere.heureArrivee}</div>
         <div>Ticket d'attente</div>
         <div class="ticket-num bold">${ticketGenere.ticket}</div>
@@ -220,7 +270,6 @@ const ClinicDashboard: React.FC = () => {
     const printWindow = window.open('', '_blank', 'width=300,height=600');
     if (!printWindow) return;
 
-    // NOUVEAU : Ajout de la balise <img> pour le QR code au centre du ticket imprimé
     const htmlTicket = `
       <html>
         <head>
@@ -236,7 +285,7 @@ const ClinicDashboard: React.FC = () => {
           </style>
         </head>
         <body>
-          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">Clinique ONG Notre Grenier</div>
+          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">ONG SANTE PLUS</div>
           <div class="center">Reçu de Caisse</div>
           <div class="center" style="font-size:10px;">Le ${transaction.date} à ${transaction.heure}</div>
           <div class="divider"></div>
@@ -285,15 +334,11 @@ const ClinicDashboard: React.FC = () => {
     setUtilisateurs(utilisateurs.filter(u => u.id !== id));
   };
 
-  const simulerScanAdmin = () => {
-    const codeGenere = Math.floor(100000000 + Math.random() * 900000000).toString();
-    setNewProduct({...newProduct, codeBarre: codeGenere});
-  };
-
   const saveProduct = () => {
     if (!newProduct.nom || !newProduct.codeBarre) return alert("Le nom et le code barre sont obligatoires.");
     setMedicaments([...medicaments, { ...newProduct, id: `M${Date.now()}` } as Medicament]);
     setShowAddProduct(false); setNewProduct({ stock: 0, prix: 0 });
+    setIsAdminCameraActive(false);
   };
 
   const exporterExcel = () => {
@@ -311,7 +356,7 @@ const ClinicDashboard: React.FC = () => {
     if (!printWindow) return;
     let html = `<html><head><title>Rapport Financier</title>
       <style>body { font-family: Arial; padding: 20px; } table { border-collapse: collapse; width: 100%; margin-top: 20px;} th, td { border: 1px solid #ccc; padding: 10px; text-align: left; } th { background-color: #f0f0f0; } .total { font-weight: bold; font-size: 1.2em; margin-top: 20px; text-align: right;}</style></head><body>
-      <h2>Rapport des Encaissements - Clinique ONG Notre Grenier</h2><p>Date : ${new Date().toLocaleDateString()}</p>
+      <h2>Rapport des Encaissements - ONG SANTE PLUS</h2><p>Date : ${new Date().toLocaleDateString()}</p>
       <table><tr><th>Ref Facture</th><th>Date/Heure</th><th>Patient</th><th>Montant (FCFA)</th></tr>`;
     let total = 0;
     historiqueVentes.forEach(v => {
@@ -322,7 +367,6 @@ const ClinicDashboard: React.FC = () => {
     printWindow.document.write(html); printWindow.document.close();
   };
 
-
   // --- RENDU UI PRINCIPAL ---
   if (!loggedInUser) {
     return (
@@ -330,7 +374,7 @@ const ClinicDashboard: React.FC = () => {
         <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
           <div className="text-center mb-8">
             <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30"><ShieldPlus size={32} className="text-white" /></div>
-            <h1 className="text-2xl font-black text-slate-800 tracking-tight">Clinique ONG Notre Grenier</h1>
+            <h1 className="text-2xl font-black text-slate-800 tracking-tight">ONG SANTE PLUS</h1>
             <p className="text-slate-500 text-sm mt-1">Portail de Gestion Sécurisé</p>
           </div>
           <form onSubmit={handleLogin} className="flex flex-col gap-4">
@@ -349,45 +393,54 @@ const ClinicDashboard: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col bg-slate-50 font-sans">
-      {/* HEADER */}
-      <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-10">
-        <div className="flex items-center gap-3"><div className="bg-blue-500 p-2 rounded-lg"><ShieldPlus size={24} className="text-white" /></div><h1 className="text-xl font-bold hidden sm:block">Clinique ONG Notre Grenier</h1></div>
+      {/* HEADER RESPONSIVE */}
+      <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-30 relative">
+        <div className="flex items-center gap-3">
+          {/* Bouton Menu Mobile */}
+          <button className="md:hidden p-2 bg-slate-800 rounded-lg text-white" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
+            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
+          <div className="bg-blue-500 p-2 rounded-lg"><ShieldPlus size={24} className="text-white" /></div>
+          <h1 className="text-xl font-bold hidden sm:block">ONG SANTE PLUS</h1>
+        </div>
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block"><p className="text-sm font-bold text-emerald-400">Connecté(e)</p><p className="text-sm font-bold">{loggedInUser.nomComplet} ({loggedInUser.role})</p></div>
           <button onClick={handleLogout} className="bg-slate-800 hover:bg-red-500 p-2.5 rounded-xl border border-slate-700 text-slate-300"><LogOut size={18} /></button>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* SIDEBAR */}
-        <aside className="w-64 bg-white border-r border-slate-200 flex flex-col py-6 z-0">
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* SIDEBAR RESPONSIVE */}
+        <aside className={`${isMobileMenuOpen ? 'flex' : 'hidden'} md:flex flex-col w-64 bg-white border-r border-slate-200 py-6 absolute md:relative z-20 h-full shadow-xl md:shadow-none transition-all`}>
           <nav className="flex flex-col gap-2 px-4">
-            {loggedInUser.role === 'Responsable' && <button onClick={() => setActiveTab('admin')} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'admin' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><BarChart3 size={20} /> Administration</button>}
-            {loggedInUser.role === 'Accueil' && <button onClick={() => setActiveTab('accueil')} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'accueil' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><Users size={20} /> Réception</button>}
-            {loggedInUser.role === 'Infirmier' && <button onClick={() => setActiveTab('triage')} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'triage' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><Activity size={20} /> Infirmerie</button>}
-            {loggedInUser.role === 'Medecin' && <button onClick={() => setActiveTab('medecin')} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'medecin' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><Stethoscope size={20} /> Consultation</button>}
-            {loggedInUser.role === 'Caissiere' && <button onClick={() => setActiveTab('pharmacie')} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'pharmacie' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><Pill size={20} /> Pharmacie & Caisse</button>}
+            {loggedInUser.role === 'Responsable' && <button onClick={() => {setActiveTab('admin'); setIsMobileMenuOpen(false);}} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'admin' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><BarChart3 size={20} /> Administration</button>}
+            {loggedInUser.role === 'Accueil' && <button onClick={() => {setActiveTab('accueil'); setIsMobileMenuOpen(false);}} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'accueil' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><Users size={20} /> Réception</button>}
+            {loggedInUser.role === 'Infirmier' && <button onClick={() => {setActiveTab('triage'); setIsMobileMenuOpen(false);}} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'triage' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><Activity size={20} /> Infirmerie</button>}
+            {loggedInUser.role === 'Medecin' && <button onClick={() => {setActiveTab('medecin'); setIsMobileMenuOpen(false);}} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'medecin' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><Stethoscope size={20} /> Consultation</button>}
+            {loggedInUser.role === 'Caissiere' && <button onClick={() => {setActiveTab('pharmacie'); setIsMobileMenuOpen(false);}} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'pharmacie' ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><Pill size={20} /> Pharmacie & Caisse</button>}
           </nav>
         </aside>
 
-        {/* MAIN CONTENT */}
-        <main className="flex-1 p-8 overflow-y-auto bg-slate-50 relative">
+        {/* MAIN CONTENT avec padding adaptable */}
+        <main className="flex-1 p-4 md:p-8 overflow-y-auto bg-slate-50 relative w-full">
+          {/* OVERLAY POUR MENU MOBILE */}
+          {isMobileMenuOpen && <div className="absolute inset-0 bg-slate-900/50 z-10 md:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>}
 
           {/* === MODULE 0: ADMIN === */}
           {activeTab === 'admin' && (
             <div className="max-w-6xl mx-auto flex flex-col h-full">
-              <div className="flex justify-between items-end mb-8">
-                <div><h2 className="text-3xl font-bold text-slate-800">Espace Administrateur</h2></div>
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
+                <div><h2 className="text-2xl md:text-3xl font-bold text-slate-800">Espace Administrateur</h2></div>
               </div>
-              <div className="flex gap-2 mb-6 border-b border-slate-200 pb-2">
+              <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-2">
                 <button onClick={() => setAdminSubTab('stats')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'stats' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Tableau de bord</button>
                 <button onClick={() => setAdminSubTab('stock')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'stock' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Stock Pharmacie</button>
                 <button onClick={() => setAdminSubTab('personnel')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'personnel' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Personnel</button>
-                <button onClick={() => setAdminSubTab('rapports')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'rapports' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Rapports Financiers</button>
+                <button onClick={() => setAdminSubTab('rapports')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'rapports' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Rapports</button>
               </div>
 
               {adminSubTab === 'stats' && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
                   <div className="bg-white p-6 rounded-2xl border flex items-center gap-4"><div className="bg-blue-100 p-4 rounded-xl text-blue-600"><Users size={24} /></div><div><p className="text-sm font-bold text-slate-500 uppercase">Patients du jour</p><p className="text-3xl font-black">{patients.length}</p></div></div>
                   <div className="bg-white p-6 rounded-2xl border flex items-center gap-4"><div className="bg-emerald-100 p-4 rounded-xl text-emerald-600"><TrendingUp size={24} /></div><div><p className="text-sm font-bold text-slate-500 uppercase">Revenus (FCFA)</p><p className="text-3xl font-black">{historiqueVentes.reduce((acc, v) => acc + v.montant, 0).toLocaleString()}</p></div></div>
                   <div className="bg-white p-6 rounded-2xl border border-red-200 flex items-center gap-4"><div className="bg-red-100 p-4 rounded-xl text-red-600"><AlertTriangle size={24} /></div><div><p className="text-sm font-bold text-slate-500 uppercase">Alertes Stocks</p><p className="text-3xl font-black text-red-600">{medicaments.filter(m => m.stock < 10).length}</p></div></div>
@@ -395,32 +448,43 @@ const ClinicDashboard: React.FC = () => {
               )}
 
               {adminSubTab === 'stock' && (
-                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col">
-                 <div className="p-4 border-b flex justify-between items-center bg-slate-50"><h3 className="font-bold flex items-center gap-2"><Package size={20}/> Base de médicaments</h3><button onClick={() => setShowAddProduct(!showAddProduct)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold">{showAddProduct ? 'Fermer' : 'Nouveau Produit'}</button></div>
+                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col overflow-hidden">
+                 <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4"><h3 className="font-bold flex items-center gap-2"><Package size={20}/> Base de médicaments</h3><button onClick={() => setShowAddProduct(!showAddProduct)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold w-full sm:w-auto">{showAddProduct ? 'Fermer' : 'Nouveau Produit'}</button></div>
+                 
                  {showAddProduct && (
-                   <div className="p-5 bg-blue-50 border-b grid grid-cols-12 gap-4 items-end">
-                     <div className="col-span-3"><label className="text-xs font-bold text-slate-500">Nom</label><input type="text" value={newProduct.nom || ''} onChange={e => setNewProduct({...newProduct, nom: e.target.value})} className="w-full p-2.5 border rounded-lg" /></div>
-                     <div className="col-span-4"><label className="text-xs font-bold text-slate-500">Code Barre</label><div className="flex gap-2"><input type="text" value={newProduct.codeBarre || ''} onChange={e => setNewProduct({...newProduct, codeBarre: e.target.value})} className="w-full p-2.5 border rounded-lg font-mono" /><button onClick={simulerScanAdmin} className="bg-blue-600 text-white p-2.5 rounded-lg"><Scan size={20}/></button></div></div>
-                     <div className="col-span-2"><label className="text-xs font-bold text-slate-500">Prix</label><input type="number" value={newProduct.prix || ''} onChange={e => setNewProduct({...newProduct, prix: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg" /></div>
-                     <div className="col-span-3"><label className="text-xs font-bold text-slate-500">Stock</label><div className="flex gap-2"><input type="number" value={newProduct.stock || ''} onChange={e => setNewProduct({...newProduct, stock: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg" /><button onClick={saveProduct} className="bg-slate-900 text-white px-4 rounded-lg font-bold">Créer</button></div></div>
+                   <div className="p-5 bg-blue-50 border-b flex flex-col gap-4">
+                     <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                       <div className="md:col-span-3"><label className="text-xs font-bold text-slate-500">Nom</label><input type="text" value={newProduct.nom || ''} onChange={e => setNewProduct({...newProduct, nom: e.target.value})} className="w-full p-2.5 border rounded-lg" /></div>
+                       <div className="md:col-span-4"><label className="text-xs font-bold text-slate-500">Code Barre (Saisie ou Scan)</label><div className="flex gap-2"><input type="text" value={newProduct.codeBarre || ''} onChange={e => setNewProduct({...newProduct, codeBarre: e.target.value})} className="w-full p-2.5 border rounded-lg font-mono" /><button onClick={() => setIsAdminCameraActive(!isAdminCameraActive)} className={`${isAdminCameraActive ? 'bg-red-600' : 'bg-blue-600'} text-white p-2.5 rounded-lg flex-shrink-0`}><Camera size={20}/></button></div></div>
+                       <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500">Prix</label><input type="number" value={newProduct.prix || ''} onChange={e => setNewProduct({...newProduct, prix: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg" /></div>
+                       <div className="md:col-span-3"><label className="text-xs font-bold text-slate-500">Stock Initial</label><div className="flex gap-2"><input type="number" value={newProduct.stock || ''} onChange={e => setNewProduct({...newProduct, stock: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg" /><button onClick={saveProduct} className="bg-slate-900 text-white px-4 py-2.5 rounded-lg font-bold w-full md:w-auto">Créer</button></div></div>
+                     </div>
+                     {isAdminCameraActive && (
+                       <div className="w-full max-w-sm mx-auto bg-white p-2 rounded-xl shadow-inner border border-slate-300">
+                         <div id="admin-reader" className="w-full"></div>
+                         <p className="text-center text-xs text-slate-500 mt-2">Placez le code-barre devant la caméra</p>
+                       </div>
+                     )}
                    </div>
                  )}
-                 <table className="w-full text-left text-sm">
-                   <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-4">Médicament</th><th className="p-4">Code Barre</th><th className="p-4">Prix</th><th className="p-4">Stock</th><th className="p-4">Action</th></tr></thead>
-                   <tbody>
-                     {medicaments.map(med => (
-                       <tr key={med.id} className="border-b"><td className="p-4 font-bold">{med.nom}</td><td className="p-4 font-mono">{med.codeBarre}</td><td className="p-4">{med.prix.toLocaleString()} F</td><td className="p-4">{med.stock}</td><td className="p-4"><button onClick={() => setMedicaments(medicaments.map(m => m.id === med.id ? {...m, stock: m.stock + 50} : m))} className="text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg font-bold">+50</button></td></tr>
-                     ))}
-                   </tbody>
-                 </table>
+                 <div className="overflow-x-auto">
+                   <table className="w-full text-left text-sm whitespace-nowrap">
+                     <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-4">Médicament</th><th className="p-4">Code Barre</th><th className="p-4">Prix</th><th className="p-4">Stock</th><th className="p-4">Action</th></tr></thead>
+                     <tbody>
+                       {medicaments.map(med => (
+                         <tr key={med.id} className="border-b"><td className="p-4 font-bold">{med.nom}</td><td className="p-4 font-mono">{med.codeBarre}</td><td className="p-4">{med.prix.toLocaleString()} F</td><td className="p-4">{med.stock}</td><td className="p-4"><button onClick={() => setMedicaments(medicaments.map(m => m.id === med.id ? {...m, stock: m.stock + 50} : m))} className="text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg font-bold">+50</button></td></tr>
+                       ))}
+                     </tbody>
+                   </table>
+                 </div>
                </div>
               )}
 
               {adminSubTab === 'personnel' && (
-                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col">
-                 <div className="p-4 border-b flex justify-between items-center bg-slate-50"><h3 className="font-bold flex items-center gap-2"><UserPlus size={20}/> Utilisateurs</h3><button onClick={() => setShowAddUser(!showAddUser)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold">Créer un compte</button></div>
+                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col overflow-hidden">
+                 <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4"><h3 className="font-bold flex items-center gap-2"><UserPlus size={20}/> Utilisateurs</h3><button onClick={() => setShowAddUser(!showAddUser)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold w-full sm:w-auto">Créer un compte</button></div>
                  {showAddUser && (
-                    <div className="p-4 bg-blue-50 border-b grid grid-cols-5 gap-4 items-end">
+                    <div className="p-4 bg-blue-50 border-b grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 items-end">
                      <div><label className="text-xs font-bold">Nom</label><input type="text" onChange={e => setNewUser({...newUser, nomComplet: e.target.value})} className="w-full p-2 border rounded-lg" /></div>
                      <div><label className="text-xs font-bold">Login</label><input type="text" onChange={e => setNewUser({...newUser, username: e.target.value})} className="w-full p-2 border rounded-lg" /></div>
                      <div><label className="text-xs font-bold">Mdp</label><input type="text" onChange={e => setNewUser({...newUser, mdp: e.target.value})} className="w-full p-2 border rounded-lg" /></div>
@@ -428,21 +492,23 @@ const ClinicDashboard: React.FC = () => {
                      <div><button onClick={saveUser} className="w-full bg-slate-900 text-white p-2 rounded-lg">Enregistrer</button></div>
                    </div>
                  )}
-                 <table className="w-full text-left text-sm">
-                   <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-4">Nom</th><th className="p-4">Rôle</th><th className="p-4">Login</th><th className="p-4">Actions</th></tr></thead>
-                   <tbody>{utilisateurs.map(u => (<tr key={u.id} className="border-b"><td className="p-4 font-bold">{u.nomComplet}</td><td className="p-4">{u.role}</td><td className="p-4">{u.username}</td><td className="p-4"><button onClick={() => deleteUser(u.id)} className="text-red-500"><Trash2 size={16}/></button></td></tr>))}</tbody>
-                 </table>
+                 <div className="overflow-x-auto">
+                   <table className="w-full text-left text-sm whitespace-nowrap">
+                     <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-4">Nom</th><th className="p-4">Rôle</th><th className="p-4">Login</th><th className="p-4">Actions</th></tr></thead>
+                     <tbody>{utilisateurs.map(u => (<tr key={u.id} className="border-b"><td className="p-4 font-bold">{u.nomComplet}</td><td className="p-4">{u.role}</td><td className="p-4">{u.username}</td><td className="p-4"><button onClick={() => deleteUser(u.id)} className="text-red-500"><Trash2 size={16}/></button></td></tr>))}</tbody>
+                   </table>
+                 </div>
                </div>
               )}
 
               {adminSubTab === 'rapports' && (
-                <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col">
-                  <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col overflow-hidden">
+                  <div className="p-4 md:p-6 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
                     <h3 className="font-bold flex items-center gap-2"><FileBarChart size={20}/> Historique</h3>
-                    <div className="flex gap-3"><button onClick={exporterExcel} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"><Download size={16}/> Exporter Excel</button><button onClick={exporterPDF} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2"><FileText size={16}/> Enregistrer PDF</button></div>
+                    <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto"><button onClick={exporterExcel} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 w-full sm:w-auto"><Download size={16}/> Exporter Excel</button><button onClick={exporterPDF} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2 w-full sm:w-auto"><FileText size={16}/> Enregistrer PDF</button></div>
                   </div>
-                  <div className="p-6">
-                    <table className="w-full text-left text-sm border">
+                  <div className="p-4 md:p-6 overflow-x-auto">
+                    <table className="w-full text-left text-sm border whitespace-nowrap">
                       <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-3">Facture</th><th className="p-3">Date/Heure</th><th className="p-3">Patient</th><th className="p-3 text-right">Montant</th></tr></thead>
                       <tbody>{historiqueVentes.map(v => (<tr key={v.id} className="border-b"><td className="p-3 font-mono text-slate-500">{v.id}</td><td className="p-3">{v.date} {v.heure}</td><td className="p-3 font-bold">{v.patientNom}</td><td className="p-3 text-right font-bold text-emerald-600">{v.montant.toLocaleString()} F</td></tr>))}</tbody>
                     </table>
@@ -454,12 +520,12 @@ const ClinicDashboard: React.FC = () => {
 
           {/* === MODULE 1: ACCUEIL === */}
           {activeTab === 'accueil' && (
-             <div className="max-w-4xl mx-auto">
-              <h2 className="text-3xl font-bold text-slate-800 mb-2">Accueil & Enregistrement</h2>
-              <p className="text-slate-500 mb-8">Génération automatique des dossiers, tickets d'attente et QR Codes</p>
+             <div className="max-w-4xl mx-auto h-full overflow-y-auto">
+              <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-2">Accueil & Enregistrement</h2>
+              <p className="text-slate-500 mb-6 md:mb-8 text-sm md:text-base">Génération automatique des dossiers, tickets d'attente et QR Codes</p>
 
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
+              <div className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 shadow-sm">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 mb-6">
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Nom complet du patient</label>
                     <input type="text" value={nouveauNom} onChange={(e) => setNouveauNom(e.target.value)} placeholder="Ex: Koffi Emmanuel" className="w-full p-4 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-100 outline-none" />
@@ -467,10 +533,10 @@ const ClinicDashboard: React.FC = () => {
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Service demandé</label>
                     <div className="grid grid-cols-2 gap-3">
-                      <button onClick={() => setNouveauService('GEN')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all ${nouveauService === 'GEN' ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}><GenMed size={18}/> Général</button>
-                      <button onClick={() => setNouveauService('PED')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all ${nouveauService === 'PED' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}><Baby size={18}/> Pédiatrie</button>
-                      <button onClick={() => setNouveauService('MAT')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all ${nouveauService === 'MAT' ? 'bg-rose-50 border-rose-500 text-rose-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}><Heart size={18}/> Maternité</button>
-                      <button onClick={() => setNouveauService('CHIR')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all ${nouveauService === 'CHIR' ? 'bg-purple-50 border-purple-500 text-purple-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}><Activity size={18}/> Chirurgie</button>
+                      <button onClick={() => setNouveauService('GEN')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all text-sm md:text-base ${nouveauService === 'GEN' ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}><GenMed size={18}/> Général</button>
+                      <button onClick={() => setNouveauService('PED')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all text-sm md:text-base ${nouveauService === 'PED' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}><Baby size={18}/> Pédiatrie</button>
+                      <button onClick={() => setNouveauService('MAT')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all text-sm md:text-base ${nouveauService === 'MAT' ? 'bg-rose-50 border-rose-500 text-rose-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}><Heart size={18}/> Maternité</button>
+                      <button onClick={() => setNouveauService('CHIR')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all text-sm md:text-base ${nouveauService === 'CHIR' ? 'bg-purple-50 border-purple-500 text-purple-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}><Activity size={18}/> Chirurgie</button>
                     </div>
                   </div>
                 </div>
@@ -480,7 +546,7 @@ const ClinicDashboard: React.FC = () => {
               </div>
 
               {ticketGenere && (
-                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                   <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full overflow-hidden animate-in fade-in zoom-in duration-200">
                     <div className="bg-slate-900 text-white text-center p-6 pb-8 rounded-b-[2rem] shadow-inner relative">
                       <p className="text-slate-300 text-sm font-medium uppercase tracking-widest mb-1">Votre Numéro</p>
@@ -510,9 +576,9 @@ const ClinicDashboard: React.FC = () => {
           {/* === MODULE 2: INFIRMERIE === */}
           {activeTab === 'triage' && (
              <div className="h-full flex flex-col">
-               <h2 className="text-3xl font-bold text-slate-800 mb-8">Infirmerie - Triage</h2>
-               <div className="grid grid-cols-3 gap-8 flex-1">
-                 <div className="col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto">
+               <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Infirmerie - Triage</h2>
+               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1 min-h-0">
+                 <div className="col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[40vh] md:max-h-full">
                    <h3 className="font-bold mb-4 flex items-center gap-2"><Clock size={18} className="text-blue-500"/> Patients en attente</h3>
                    {patients.filter(p => p.statut === 'Triage').map(patient => (
                      <div key={patient.id} onClick={() => setSelectedPatientTriage(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 transition-all ${selectedPatientTriage?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
@@ -520,19 +586,19 @@ const ClinicDashboard: React.FC = () => {
                      </div>
                    ))}
                  </div>
-                 <div className="col-span-2 bg-white border rounded-2xl p-6 shadow-sm">
+                 <div className="md:col-span-2 bg-white border rounded-2xl p-4 md:p-6 shadow-sm overflow-y-auto">
                    {selectedPatientTriage ? (
                      <>
-                        <h3 className="text-xl font-bold mb-6 border-b pb-4">Prise de constantes : {selectedPatientTriage.nom}</h3>
-                        <div className="grid grid-cols-2 gap-6 mb-8">
+                        <h3 className="text-lg md:text-xl font-bold mb-4 md:mb-6 border-b pb-4">Prise de constantes : {selectedPatientTriage.nom}</h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6 mb-6 md:mb-8">
                           <div><label className="text-sm font-bold text-slate-600 mb-2 block flex items-center gap-2"><HeartPulse size={16} className="text-red-500"/> Tension Sys</label><input type="number" value={tensionSys} onChange={e => setTensionSys(e.target.value === '' ? '' : Number(e.target.value))} className="w-full p-4 border rounded-xl outline-none" /></div>
                           <div><label className="text-sm font-bold text-slate-600 mb-2 block flex items-center gap-2"><HeartPulse size={16} className="text-red-500"/> Tension Dia</label><input type="number" value={tensionDia} onChange={e => setTensionDia(e.target.value === '' ? '' : Number(e.target.value))} className="w-full p-4 border rounded-xl outline-none" /></div>
                           <div><label className="text-sm font-bold text-slate-600 mb-2 block flex items-center gap-2"><Thermometer size={16} className="text-orange-500"/> Température (°C)</label><input type="number" value={temperature} onChange={e => setTemperature(e.target.value === '' ? '' : Number(e.target.value))} className="w-full p-4 border rounded-xl outline-none" /></div>
                           <div><label className="text-sm font-bold text-slate-600 mb-2 block flex items-center gap-2"><Weight size={16} className="text-emerald-500"/> Poids (kg)</label><input type="number" value={poids} onChange={e => setPoids(e.target.value === '' ? '' : Number(e.target.value))} className="w-full p-4 border rounded-xl outline-none" /></div>
                         </div>
-                        <div className="flex justify-end"><button onClick={validerTriage} disabled={!tensionSys || !tensionDia || !temperature || !poids} className="bg-blue-600 text-white px-8 py-4 rounded-xl font-bold flex items-center gap-2 disabled:opacity-50"><CheckCircle2 size={20}/> Transférer au Médecin</button></div>
+                        <div className="flex justify-end"><button onClick={validerTriage} disabled={!tensionSys || !tensionDia || !temperature || !poids} className="w-full sm:w-auto bg-blue-600 text-white px-8 py-4 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50"><CheckCircle2 size={20}/> Transférer au Médecin</button></div>
                      </>
-                   ) : <div className="h-full flex flex-col items-center justify-center text-slate-400"><Activity size={48} className="mb-4 opacity-20" /><p>Sélectionnez un patient.</p></div>}
+                   ) : <div className="h-full flex flex-col items-center justify-center text-slate-400 py-12"><Activity size={48} className="mb-4 opacity-20" /><p>Sélectionnez un patient.</p></div>}
                  </div>
                </div>
              </div>
@@ -541,9 +607,9 @@ const ClinicDashboard: React.FC = () => {
           {/* === MODULE 3: MÉDECIN === */}
           {activeTab === 'medecin' && (
             <div className="h-full flex flex-col">
-              <h2 className="text-3xl font-bold text-slate-800 mb-6">Bureau du Médecin</h2>
-              <div className="grid grid-cols-4 gap-8 flex-1">
-                <div className="col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto">
+              <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Bureau du Médecin</h2>
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 min-h-0">
+                <div className="col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full">
                   <h3 className="font-bold mb-4 flex items-center gap-2"><Users size={18} className="text-blue-500"/> Salle d'attente</h3>
                   {patients.filter(p => p.statut === 'Consultation').map(patient => (
                     <div key={patient.id} onClick={() => setSelectedPatientMed(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 ${selectedPatientMed?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
@@ -552,18 +618,18 @@ const ClinicDashboard: React.FC = () => {
                   ))}
                 </div>
 
-                <div className="col-span-3 bg-white border rounded-2xl flex flex-col shadow-sm">
+                <div className="lg:col-span-3 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden">
                   {selectedPatientMed ? (
-                    <div className="flex-1 flex flex-col">
-                      <div className="bg-slate-900 text-white p-6"><h2 className="text-2xl font-bold">{selectedPatientMed.nom}</h2><p className="text-slate-400 font-mono text-sm">Dossier N° {selectedPatientMed.id}</p></div>
-                      <div className="p-6 grid grid-cols-2 gap-6 flex-1">
+                    <div className="flex-1 flex flex-col overflow-y-auto">
+                      <div className="bg-slate-900 text-white p-4 md:p-6"><h2 className="text-xl md:text-2xl font-bold">{selectedPatientMed.nom}</h2><p className="text-slate-400 font-mono text-sm">Dossier N° {selectedPatientMed.id}</p></div>
+                      <div className="p-4 md:p-6 grid grid-cols-1 md:grid-cols-2 gap-6 flex-1">
                         <div className="flex flex-col gap-4">
-                          <div><label className="text-sm font-bold text-slate-700 mb-2 block">Notes Cliniques</label><textarea className="w-full p-4 border rounded-xl h-40 outline-none focus:border-blue-400" value={notesCliniques} onChange={e => setNotesCliniques(e.target.value)} /></div>
+                          <div><label className="text-sm font-bold text-slate-700 mb-2 block">Notes Cliniques</label><textarea className="w-full p-4 border rounded-xl h-32 md:h-40 outline-none focus:border-blue-400" value={notesCliniques} onChange={e => setNotesCliniques(e.target.value)} /></div>
                           <div><label className="text-sm font-bold text-slate-700 mb-2 block">Diagnostic Retenu</label><input type="text" className="w-full p-4 border rounded-xl font-bold outline-none focus:border-blue-400" value={diagnostic} onChange={e => setDiagnostic(e.target.value)} /></div>
                         </div>
-                        <div className="bg-blue-50 rounded-2xl p-5 flex flex-col border border-blue-100">
+                        <div className="bg-blue-50 rounded-2xl p-4 md:p-5 flex flex-col border border-blue-100 min-h-[300px]">
                           <h4 className="font-bold text-blue-900 mb-2 flex items-center gap-2"><Pill size={18}/> Ordonnance Numérique</h4>
-                          <div className="bg-white rounded-xl border p-2 mb-4 max-h-40 overflow-y-auto">
+                          <div className="bg-white rounded-xl border p-2 mb-4 max-h-32 md:max-h-40 overflow-y-auto">
                             {medicaments.map(med => {
                               const isSelected = ordonnance.some(m => m.id === med.id);
                               return (
@@ -576,13 +642,13 @@ const ClinicDashboard: React.FC = () => {
                           </div>
                           <div className="bg-white border rounded-xl p-4 flex-1 flex flex-col">
                             <ul className="list-disc pl-4 text-sm font-bold text-slate-700 mb-4 flex-1 overflow-y-auto">{ordonnance.map(m => <li key={m.id}>{m.nom}</li>)}</ul>
-                            <div className="mt-auto pt-3 border-t flex justify-between items-end"><span className="text-sm text-slate-500 font-bold">Total estimé :</span><span className="text-2xl font-black text-blue-600">{totalOrdonnance.toLocaleString()} F</span></div>
+                            <div className="mt-auto pt-3 border-t flex justify-between items-end"><span className="text-sm text-slate-500 font-bold">Total estimé :</span><span className="text-xl md:text-2xl font-black text-blue-600">{totalOrdonnance.toLocaleString()} F</span></div>
                           </div>
                         </div>
                       </div>
-                      <div className="p-4 bg-slate-50 border-t flex justify-between items-center">
-                        <button onClick={terminerSansOrdonnance} className="px-6 py-3 text-red-600 font-bold hover:bg-red-50 rounded-xl flex items-center gap-2"><Ban size={18}/> Clôturer</button>
-                        <div className="flex gap-3"><button onClick={annulerOrdonnance} className="px-6 py-3 bg-white border rounded-xl font-bold">Vider</button><button onClick={envoyerPharmacie} disabled={!diagnostic} className="bg-emerald-600 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 disabled:opacity-50"><CheckCircle2 size={20}/> Envoyer en Pharmacie</button></div>
+                      <div className="p-4 bg-slate-50 border-t flex flex-col sm:flex-row justify-between items-center gap-4">
+                        <button onClick={terminerSansOrdonnance} className="w-full sm:w-auto px-6 py-3 text-red-600 font-bold hover:bg-red-50 rounded-xl flex items-center justify-center gap-2"><Ban size={18}/> Clôturer sans ordonnance</button>
+                        <div className="flex gap-3 w-full sm:w-auto"><button onClick={annulerOrdonnance} className="flex-1 sm:flex-none px-6 py-3 bg-white border rounded-xl font-bold">Vider</button><button onClick={envoyerPharmacie} disabled={!diagnostic} className="flex-1 sm:flex-none bg-emerald-600 text-white px-8 py-3 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50"><CheckCircle2 size={20}/> Envoyer Caisse</button></div>
                       </div>
                     </div>
                   ) : <div className="p-12 h-full flex flex-col items-center justify-center text-slate-400"><Stethoscope size={64} className="mb-4 opacity-20" /><p>Sélectionnez un patient.</p></div>}
@@ -594,10 +660,10 @@ const ClinicDashboard: React.FC = () => {
           {/* === MODULE 4: PHARMACIE === */}
           {activeTab === 'pharmacie' && (
             <div className="h-full flex flex-col relative">
-              <h2 className="text-3xl font-bold text-slate-800 mb-6">Caisse Pharmacie</h2>
-              <div className="grid grid-cols-4 gap-8 flex-1">
+              <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Caisse Pharmacie</h2>
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 flex-1 min-h-0">
                 
-                <div className="col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto">
+                <div className="col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[25vh] lg:max-h-full">
                   <h3 className="font-bold mb-4 flex items-center gap-2"><Users size={18}/> Patients envoyés</h3>
                   {patients.filter(p => p.statut === 'Pharmacie').map(patient => (
                     <div key={patient.id} onClick={() => setSelectedPatientPharmacie(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 transition-all ${selectedPatientPharmacie?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
@@ -607,18 +673,32 @@ const ClinicDashboard: React.FC = () => {
                   ))}
                 </div>
 
-                <div className="col-span-1 bg-white border rounded-2xl p-6 shadow-sm flex flex-col">
+                <div className="col-span-1 lg:col-span-1 bg-white border rounded-2xl p-4 md:p-6 shadow-sm flex flex-col overflow-y-auto">
                   {selectedPatientPharmacie ? (
-                    <div className="mb-6 p-5 bg-yellow-50 border border-yellow-200 rounded-xl shadow-inner">
+                    <div className="mb-6 p-4 md:p-5 bg-yellow-50 border border-yellow-200 rounded-xl shadow-inner">
                       <h4 className="text-xs font-black text-yellow-800 uppercase mb-3 flex items-center gap-2"><FileText size={16}/> À délivrer :</h4>
                       <ul className="text-sm font-bold text-slate-800 space-y-2">
                         {selectedPatientPharmacie.ordonnance?.map(m => <li key={m.id} className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-yellow-500 mt-1.5"></div>{m.nom}</li>)}
                       </ul>
                     </div>
-                  ) : <div className="mb-6 p-4 bg-slate-50 rounded-xl text-sm text-slate-400 text-center border border-dashed border-slate-300">Scannez le QR Code du patient ou sélectionnez-le à gauche.</div>}
+                  ) : <div className="mb-6 p-4 bg-slate-50 rounded-xl text-sm text-slate-400 text-center border border-dashed border-slate-300">Sélectionnez le patient à gauche ou scannez son QR Code.</div>}
 
                   <div className="mt-auto">
-                    <label className="text-xs font-bold text-slate-500 uppercase mb-2 block flex items-center gap-2"><Scan size={14}/> Scanner Actif</label>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2"><Scan size={14}/> Scanner un code</label>
+                      <button onClick={() => setIsCameraActive(!isCameraActive)} className={`p-2 rounded-lg text-white ${isCameraActive ? 'bg-red-500' : 'bg-blue-600'}`}>
+                        <Camera size={16} />
+                      </button>
+                    </div>
+
+                    {/* VRAI SCANNER CAMERA */}
+                    {isCameraActive && (
+                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500">
+                        <div id="reader" className="w-full"></div>
+                        <p className="text-white text-xs text-center p-2">Caméra active - Pointez vers un code</p>
+                      </div>
+                    )}
+
                     <form onSubmit={e => { e.preventDefault(); handleTraitementScan(codeSaisi); }} className="relative">
                       <Search className="absolute left-4 top-4 text-slate-400" size={20} />
                       <input 
@@ -626,22 +706,22 @@ const ClinicDashboard: React.FC = () => {
                         type="text" 
                         value={codeSaisi} 
                         onChange={(e) => setCodeSaisi(e.target.value)} 
-                        placeholder="Scan QR ou Code Barre" 
-                        className="w-full pl-12 pr-4 py-4 border border-slate-300 rounded-xl font-mono text-lg outline-none focus:border-blue-500 focus:ring-2"
+                        placeholder="Ou saisissez le code..." 
+                        className="w-full pl-12 pr-4 py-4 border border-slate-300 rounded-xl font-mono text-sm md:text-lg outline-none focus:border-blue-500 focus:ring-2"
                       />
                     </form>
                     {messageErreur && <div className="mt-3 text-red-600 text-sm font-bold bg-red-50 p-3 rounded-lg flex items-center gap-2"><AlertCircle size={16}/> {messageErreur}</div>}
                   </div>
                 </div>
 
-                <div className="col-span-2 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden relative">
-                  <div className="flex-1 p-6 overflow-y-auto bg-slate-50/50">
-                    {panier.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-slate-300"><Scan size={64} className="mb-4 opacity-20" /><p className="text-slate-500 font-medium">Scannez un produit pour l'ajouter</p></div> : (
+                <div className="col-span-1 lg:col-span-2 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden relative">
+                  <div className="flex-1 p-4 md:p-6 overflow-y-auto bg-slate-50/50">
+                    {panier.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-slate-300 py-12"><Scan size={64} className="mb-4 opacity-20" /><p className="text-slate-500 font-medium">Scannez un produit pour l'ajouter</p></div> : (
                       <div className="flex flex-col gap-3">
                         {panier.map((ligne, i) => (
-                          <div key={i} className="flex justify-between items-center p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
+                          <div key={i} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 bg-white rounded-xl border border-slate-200 shadow-sm gap-4">
                             <div><h4 className="font-bold text-slate-800">{ligne.medicament.nom}</h4><p className="text-xs text-slate-400 font-mono mt-1">Ref: {ligne.medicament.codeBarre}</p></div>
-                            <div className="flex items-center gap-6">
+                            <div className="flex items-center gap-4 sm:gap-6 w-full sm:w-auto justify-between sm:justify-end">
                               <div className="text-center"><p className="text-xs text-slate-400">Qté</p><p className="font-bold">x{ligne.quantite}</p></div>
                               <div className="text-right w-24"><p className="text-xs text-slate-400">Prix</p><p className="font-bold text-blue-600">{(ligne.medicament.prix * ligne.quantite).toLocaleString()} F</p></div>
                               <button onClick={() => setPanier(panier.filter(l => l.medicament.id !== ligne.medicament.id))} className="text-red-400 hover:text-red-600 p-2 hover:bg-red-50 rounded-lg"><Trash2 size={20}/></button>
@@ -651,24 +731,24 @@ const ClinicDashboard: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <div className="p-8 bg-slate-900 text-white mt-auto rounded-t-3xl">
+                  <div className="p-6 md:p-8 bg-slate-900 text-white mt-auto md:rounded-t-3xl">
                     <div className="flex justify-between items-end mb-6">
-                      <p className="text-slate-400 font-medium text-lg">Net à payer</p>
-                      <p className="text-5xl font-black text-emerald-400">{panier.reduce((t, l) => t + (l.medicament.prix * l.quantite), 0).toLocaleString()} <span className="text-2xl text-emerald-600">FCFA</span></p>
+                      <p className="text-slate-400 font-medium text-base md:text-lg">Net à payer</p>
+                      <p className="text-3xl md:text-5xl font-black text-emerald-400">{panier.reduce((t, l) => t + (l.medicament.prix * l.quantite), 0).toLocaleString()} <span className="text-xl md:text-2xl text-emerald-600">FCFA</span></p>
                     </div>
-                    <button onClick={validerPaiement} disabled={panier.length === 0} className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-white p-5 rounded-xl font-bold flex justify-center items-center gap-3 text-lg transition-all">
+                    <button onClick={validerPaiement} disabled={panier.length === 0} className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-white p-4 md:p-5 rounded-xl font-bold flex justify-center items-center gap-3 text-base md:text-lg transition-all">
                       <CheckCircle2 size={24} /> Valider l'Encaissement
                     </button>
                   </div>
 
-                  {/* APERÇU DU REÇU (Modal interne de la Pharmacie) */}
+                  {/* APERÇU DU REÇU */}
                   {recuApercu && (
                     <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                      <div className="bg-slate-100 p-6 rounded-2xl shadow-2xl flex flex-col items-center">
-                        <h3 className="text-slate-800 font-bold mb-4 flex items-center gap-2"><Search size={20}/> Aperçu du ticket 58mm</h3>
+                      <div className="bg-slate-100 p-6 rounded-2xl shadow-2xl flex flex-col items-center max-w-sm w-full">
+                        <h3 className="text-slate-800 font-bold mb-4 flex items-center gap-2"><Search size={20}/> Aperçu du ticket</h3>
                         
-                        <div className="bg-white p-4 w-[58mm] min-h-[100mm] shadow-lg mb-6 font-mono text-[10px] text-black border border-slate-300">
-                          <div className="text-center font-bold text-sm mb-1">Clinique ONG Notre Grenier</div>
+                        <div className="bg-white p-4 w-[58mm] min-h-[100mm] shadow-lg mb-6 font-mono text-[10px] text-black border border-slate-300 mx-auto">
+                          <div className="text-center font-bold text-sm mb-1">ONG SANTE PLUS</div>
                           <div className="text-center mb-1">Reçu de Caisse</div>
                           <div className="text-center text-[8px]">Le {recuApercu.date} à {recuApercu.heure}</div>
                           <div className="border-t border-dashed border-black my-2"></div>
@@ -688,7 +768,6 @@ const ClinicDashboard: React.FC = () => {
                           <div className="flex justify-between font-bold text-xs"><span>TOTAL NET:</span><span>{recuApercu.montant} F</span></div>
                           <div className="border-t border-dashed border-black my-2"></div>
                           
-                          {/* NOUVEAU: Le QR code intégré à la maquette du reçu de la caisse */}
                           <div className="flex justify-center my-2">
                             <img 
                               src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${recuApercu.id}`} 
@@ -707,7 +786,6 @@ const ClinicDashboard: React.FC = () => {
                       </div>
                     </div>
                   )}
-
                 </div>
               </div>
             </div>
