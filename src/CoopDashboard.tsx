@@ -11,22 +11,20 @@ import {
   Clock, CheckCircle2, Thermometer, Weight, HeartPulse,
   FileText, PlusCircle, Check,
   BarChart3, Package, TrendingUp, AlertTriangle, Plus,
-  Lock, UserPlus, LogOut, Save, X, FileBarChart, Ban, Download, Menu
+  Lock, UserPlus, LogOut, Save, X, FileBarChart, Ban, Download, Menu, Wand2
 } from 'lucide-react';
 
 // ============================================================================
-// CONFIGURATION FIREBASE (À remplacer par vos vraies clés Firebase)
+// CONFIGURATION FIREBASE
 // ============================================================================
-// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBmeFkD6L_U9eYymnO8rBGddUisJb0ysqA",
-  authDomain: "onggrenier.firebaseapp.com",
-  projectId: "onggrenier",
-  storageBucket: "onggrenier.firebasestorage.app",
-  messagingSenderId: "728693944134",
-  appId: "1:728693944134:web:e9d20c5ff05462a0cfff47"
+  apiKey: "VOTRE_API_KEY",
+  authDomain: "votre-projet.firebaseapp.com",
+  projectId: "votre-projet",
+  storageBucket: "votre-projet.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abcdef"
 };
-
 
 let app: any, auth: any, db: any;
 try {
@@ -123,7 +121,7 @@ const ClinicDashboard: React.FC = () => {
     }
   }, [activeTab, recuApercu, isCameraActive]);
 
-  // Logique du Scanner avec la caméra (Pharmacie) - CORRIGÉ POUR MOBILE (Caméra arrière)
+  // Logique du Scanner avec la caméra (Pharmacie) - Caméra arrière forcée
   useEffect(() => {
     let html5QrcodeScanner: Html5QrcodeScanner | null = null;
     if (isCameraActive) {
@@ -164,38 +162,33 @@ const ClinicDashboard: React.FC = () => {
   }, [isAdminCameraActive]);
 
 
-  // --- FONCTIONS SYNCHRONISATION FIREBASE (Optimiste) ---
+  // --- FONCTIONS SYNCHRONISATION FIREBASE ---
   const syncToFirebase = async (colName: string, docId: string, data: any) => {
-    if (!db) return; // Si Firebase n'est pas configuré, on ignore silencieusement
+    if (!db) return;
     try {
       await setDoc(doc(db, colName, docId), data, { merge: true });
     } catch (e) { console.error("Erreur de sync Firebase:", e); }
   };
 
 
-  // --- FONCTIONS AUTHENTIFICATION (Gère Local ET Firebase) ---
+  // --- FONCTIONS AUTHENTIFICATION ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
 
-    // Si l'identifiant est un email (contient '@'), on tente Firebase Auth
     if (loginUsername.includes('@')) {
       try {
         if (!auth) throw new Error("Firebase n'est pas configuré.");
         const userCredential = await signInWithEmailAndPassword(auth, loginUsername, loginPwd);
         setLoggedInUser({
-          id: userCredential.user.uid,
-          username: userCredential.user.email || 'Admin',
-          mdp: '***',
-          role: 'Responsable',
-          nomComplet: 'Directeur (Sécurisé)'
+          id: userCredential.user.uid, username: userCredential.user.email || 'Admin',
+          mdp: '***', role: 'Responsable', nomComplet: 'Directeur (Sécurisé)'
         });
         setActiveTab('admin');
       } catch (error: any) {
         setLoginError("Authentification Firebase échouée. Vérifiez vos accès.");
       }
     } else {
-      // Sinon, on utilise la base locale pour le personnel (Médecin, Caissière, etc.)
       const user = utilisateurs.find(u => u.username === loginUsername && u.mdp === loginPwd);
       if (user) {
         setLoggedInUser(user);
@@ -228,7 +221,7 @@ const ClinicDashboard: React.FC = () => {
     setPatients(newPatientsList); 
     setTicketGenere(newPatient); 
     setNouveauNom('');
-    syncToFirebase('patients', newPatient.id, newPatient); // Sync Firebase
+    syncToFirebase('patients', newPatient.id, newPatient);
   };
 
   const imprimerTicketAccueil = () => {
@@ -408,8 +401,9 @@ const ClinicDashboard: React.FC = () => {
     setUtilisateurs(utilisateurs.filter(u => u.id !== id));
   };
 
-  const simulerScanAdmin = () => {
-    const codeGenere = Math.floor(100000000 + Math.random() * 900000000).toString();
+  // NOUVEAU : Fonction pour générer un code-barres unique à la volée (au lieu de scanner)
+  const genererCodeBarreAdmin = () => {
+    const codeGenere = Math.floor(100000000000 + Math.random() * 900000000000).toString(); // Code EAN-13 style
     setNewProduct({...newProduct, codeBarre: codeGenere});
   };
 
@@ -420,6 +414,28 @@ const ClinicDashboard: React.FC = () => {
     syncToFirebase('medicaments', medFinal.id, medFinal);
     setShowAddProduct(false); setNewProduct({ stock: 0, prix: 0 });
     setIsAdminCameraActive(false);
+  };
+
+  // NOUVEAU : Impression d'une étiquette code-barres autocollante
+  const imprimerEtiquette = (med: Partial<Medicament>) => {
+    const printWindow = window.open('', '_blank', 'width=400,height=300');
+    if (!printWindow) return;
+    const htmlLabel = `
+      <html><head><title>Étiquette - ${med.nom}</title>
+      <style>
+        @page { margin: 0; size: 50mm 30mm; }
+        body { font-family: Arial, sans-serif; width: 50mm; height: 30mm; margin: 0; padding: 2mm; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; box-sizing: border-box; }
+        .title { font-size: 10px; font-weight: bold; margin-bottom: 2px; max-height: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%;}
+        .price { font-size: 9px; font-weight: bold; margin-bottom: 2px; }
+        .barcode { max-width: 100%; max-height: 14px; }
+      </style></head><body>
+        <div class="title">${med.nom || 'Produit'}</div>
+        <div class="price">${med.prix ? med.prix.toLocaleString() + ' FCFA' : ''}</div>
+        <img class="barcode" src="https://bwipjs-api.metafloor.com/?bcid=code128&text=${med.codeBarre}&scale=2&height=10&includetext=true" alt="Barcode"/>
+        <script>window.onload = function() { window.print(); window.close(); }</script>
+      </body></html>
+    `;
+    printWindow.document.write(htmlLabel); printWindow.document.close();
   };
 
   const exporterExcel = () => {
@@ -456,7 +472,7 @@ const ClinicDashboard: React.FC = () => {
   // --- RENDU UI PRINCIPAL ---
   if (!loggedInUser) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
+      <div className="min-h-[100dvh] bg-slate-900 flex items-center justify-center p-4 font-sans">
         <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
           <div className="text-center mb-8">
             <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30"><ShieldPlus size={32} className="text-white" /></div>
@@ -484,9 +500,9 @@ const ClinicDashboard: React.FC = () => {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-slate-50 font-sans">
+    <div className="h-[100dvh] flex flex-col bg-slate-50 font-sans">
       {/* HEADER RESPONSIVE */}
-      <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-30 relative">
+      <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-30 relative shrink-0">
         <div className="flex items-center gap-3">
           <button className="md:hidden p-2 bg-slate-800 rounded-lg text-white" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
             {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
@@ -513,13 +529,13 @@ const ClinicDashboard: React.FC = () => {
         </aside>
 
         {/* MAIN CONTENT */}
-        <main className="flex-1 p-4 md:p-8 overflow-y-auto bg-slate-50 relative w-full">
+        <main className="flex-1 p-4 md:p-8 overflow-y-auto bg-slate-50 relative w-full overflow-x-hidden">
           {isMobileMenuOpen && <div className="absolute inset-0 bg-slate-900/50 z-10 md:hidden" onClick={() => setIsMobileMenuOpen(false)}></div>}
 
           {/* === MODULE 0: ADMIN === */}
           {activeTab === 'admin' && (
             <div className="max-w-6xl mx-auto flex flex-col h-full">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-8 gap-4">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-6 gap-4">
                 <div><h2 className="text-2xl md:text-3xl font-bold text-slate-800">Espace Administrateur</h2></div>
               </div>
               <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-2 overflow-x-auto w-full">
@@ -542,7 +558,6 @@ const ClinicDashboard: React.FC = () => {
                  <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
                    <h3 className="font-bold flex items-center gap-2"><Package size={20}/> Base de médicaments</h3>
                    <div className="flex w-full sm:w-auto gap-3">
-                     {/* NOUVEAU: Barre de recherche Admin */}
                      <div className="relative flex-1 sm:w-64">
                        <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
                        <input type="text" placeholder="Rechercher..." value={searchAdminStock} onChange={e => setSearchAdminStock(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg outline-none focus:border-blue-500" />
@@ -555,10 +570,30 @@ const ClinicDashboard: React.FC = () => {
                    <div className="p-5 bg-blue-50 border-b flex flex-col gap-4">
                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
                        <div className="md:col-span-3"><label className="text-xs font-bold text-slate-500">Nom</label><input type="text" value={newProduct.nom || ''} onChange={e => setNewProduct({...newProduct, nom: e.target.value})} className="w-full p-2.5 border rounded-lg" /></div>
-                       <div className="md:col-span-4"><label className="text-xs font-bold text-slate-500">Code Barre (Saisie ou Scan)</label><div className="flex gap-2"><input type="text" value={newProduct.codeBarre || ''} onChange={e => setNewProduct({...newProduct, codeBarre: e.target.value})} className="w-full p-2.5 border rounded-lg font-mono" /><button onClick={() => setIsAdminCameraActive(!isAdminCameraActive)} className={`${isAdminCameraActive ? 'bg-red-600' : 'bg-blue-600'} text-white p-2.5 rounded-lg flex-shrink-0`}><Camera size={20}/></button></div></div>
-                       <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500">Prix</label><input type="number" value={newProduct.prix || ''} onChange={e => setNewProduct({...newProduct, prix: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg" /></div>
+                       <div className="md:col-span-4">
+                         <label className="text-xs font-bold text-slate-500">Code Barre (Saisie, Scan, Auto)</label>
+                         <div className="flex gap-2">
+                           <input type="text" value={newProduct.codeBarre || ''} onChange={e => setNewProduct({...newProduct, codeBarre: e.target.value})} className="w-full p-2.5 border rounded-lg font-mono text-sm" placeholder="Ex: 123456" />
+                           {/* NOUVEAU: Bouton de génération automatique */}
+                           <button onClick={genererCodeBarreAdmin} className="bg-slate-200 text-slate-700 p-2.5 rounded-lg flex-shrink-0" title="Générer un code automatiquement"><Wand2 size={20}/></button>
+                           <button onClick={() => setIsAdminCameraActive(!isAdminCameraActive)} className={`${isAdminCameraActive ? 'bg-red-600' : 'bg-blue-600'} text-white p-2.5 rounded-lg flex-shrink-0`} title="Scanner avec la caméra"><Camera size={20}/></button>
+                         </div>
+                       </div>
+                       <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500">Prix (FCFA)</label><input type="number" value={newProduct.prix || ''} onChange={e => setNewProduct({...newProduct, prix: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg" /></div>
                        <div className="md:col-span-3"><label className="text-xs font-bold text-slate-500">Stock Initial</label><div className="flex gap-2"><input type="number" value={newProduct.stock || ''} onChange={e => setNewProduct({...newProduct, stock: Number(e.target.value)})} className="w-full p-2.5 border rounded-lg" /><button onClick={saveProduct} className="bg-slate-900 text-white px-4 py-2.5 rounded-lg font-bold w-full md:w-auto">Créer</button></div></div>
                      </div>
+                     
+                     {/* NOUVEAU: Aperçu du code barre généré et Bouton Impression */}
+                     {newProduct.codeBarre && (
+                       <div className="mt-2 p-4 bg-white rounded-xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                         <div className="flex flex-col items-center sm:items-start w-full sm:w-auto">
+                           <p className="text-xs font-bold text-slate-500 uppercase mb-2">Aperçu du code-barres :</p>
+                           <img src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${newProduct.codeBarre}&scale=2&height=10&includetext=true`} alt="Aperçu Code Barre" className="max-h-16 object-contain" />
+                         </div>
+                         <button onClick={() => imprimerEtiquette(newProduct as Medicament)} className="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-slate-50 w-full sm:w-auto transition-colors"><Printer size={16}/> Imprimer l'étiquette</button>
+                       </div>
+                     )}
+
                      {isAdminCameraActive && (
                        <div className="w-full max-w-sm mx-auto bg-white p-2 rounded-xl shadow-inner border border-slate-300">
                          <div id="admin-reader" className="w-full"></div>
@@ -738,7 +773,6 @@ const ClinicDashboard: React.FC = () => {
                             <span className="text-xs bg-blue-200 text-blue-800 px-2 py-1 rounded hidden sm:block">Prix transparents</span>
                           </div>
                           
-                          {/* NOUVEAU: Barre de recherche Médecin */}
                           <div className="relative mb-3">
                             <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
                             <input type="text" placeholder="Rechercher un médicament..." value={searchMedecin} onChange={e => setSearchMedecin(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg outline-none focus:border-blue-500" />
@@ -884,7 +918,11 @@ const ClinicDashboard: React.FC = () => {
                           <div className="border-t border-dashed border-black my-2"></div>
                           
                           <div className="flex justify-center my-2">
-                            <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${recuApercu.id}`} alt="QR Code Reçu" className="w-16 h-16 object-contain" />
+                            <img 
+                              src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${recuApercu.id}`} 
+                              alt="QR Code Reçu" 
+                              className="w-16 h-16 object-contain"
+                            />
                           </div>
 
                           <div className="text-center mt-2 text-[8px]">Bonne guérison !</div>
