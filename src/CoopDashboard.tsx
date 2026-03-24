@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Users, Activity, Stethoscope, Pill, 
   Settings, CreditCard, QrCode, Printer,
@@ -7,7 +7,7 @@ import {
   Clock, CheckCircle2, Thermometer, Weight, HeartPulse,
   FileText, PlusCircle, Check,
   BarChart3, Package, TrendingUp, AlertTriangle, Plus,
-  Lock, UserPlus, LogOut, Save, X, FileBarChart, Ban
+  Lock, UserPlus, LogOut, Save, X, FileBarChart, Ban, Download
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -19,7 +19,7 @@ interface User { id: string; username: string; mdp: string; role: Role; nomCompl
 interface ConstantesVitales { sys: number; dia: number; temp: number; poids: number; }
 interface Medicament { id: string; codeBarre: string; nom: string; stock: number; prix: number; }
 interface LignePanier { medicament: Medicament; quantite: number; }
-interface RapportVente { id: string; patientNom: string; montant: number; heure: string; }
+interface RapportVente { id: string; patientNom: string; montant: number; heure: string; detailsPanier: LignePanier[]; }
 
 interface Patient {
   id: string; ticket: string; nom: string; service: ServiceType;
@@ -79,11 +79,19 @@ const ClinicDashboard: React.FC = () => {
   const [panier, setPanier] = useState<LignePanier[]>([]);
   const [codeSaisi, setCodeSaisi] = useState('');
   const [messageErreur, setMessageErreur] = useState('');
+  const inputScanRef = useRef<HTMLInputElement>(null); // Pour auto-focus de la douchette
 
   const [showAddUser, setShowAddUser] = useState(false);
   const [newUser, setNewUser] = useState<Partial<User>>({ role: 'Medecin' });
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [newProduct, setNewProduct] = useState<Partial<Medicament>>({ stock: 0, prix: 0 });
+
+  // Autofocus pour le scanner à la pharmacie
+  useEffect(() => {
+    if (activeTab === 'pharmacie' && inputScanRef.current) {
+      inputScanRef.current.focus();
+    }
+  }, [activeTab]);
 
   // --- FONCTIONS AUTHENTIFICATION ---
   const handleLogin = (e: React.FormEvent) => {
@@ -92,7 +100,6 @@ const ClinicDashboard: React.FC = () => {
     if (user) {
       setLoggedInUser(user);
       setLoginError('');
-      // Redirection stricte
       if (user.role === 'Responsable') setActiveTab('admin');
       else if (user.role === 'Caissiere') setActiveTab('pharmacie');
       else if (user.role === 'Infirmier') setActiveTab('triage');
@@ -127,7 +134,6 @@ const ClinicDashboard: React.FC = () => {
     setSelectedPatientTriage(null); setTensionSys(''); setTensionDia(''); setTemperature(''); setPoids('');
   };
 
-  // Fonctions Médecin
   const totalOrdonnance = ordonnance.reduce((sum, med) => sum + med.prix, 0);
 
   const envoyerPharmacie = () => {
@@ -142,44 +148,131 @@ const ClinicDashboard: React.FC = () => {
     setSelectedPatientMed(null); setNotesCliniques(''); setDiagnostic(''); setOrdonnance([]);
   };
 
-  const annulerOrdonnance = () => {
-    setOrdonnance([]); // Vide juste la liste des médicaments sélectionnés
+  const annulerOrdonnance = () => { setOrdonnance([]); };
+
+  // --- NOUVEAU : SCANNER INTELLIGENT CAISSE ---
+  const handleTraitementScan = (code: string) => {
+    setMessageErreur('');
+    
+    // 1. Si la douchette scanne un QR Code Patient (ex: DOS-1234)
+    if (code.startsWith('DOS-')) {
+      const patientTrouve = patients.find(p => p.id === code);
+      if (patientTrouve) {
+        if (patientTrouve.statut === 'Pharmacie') {
+          setSelectedPatientPharmacie(patientTrouve);
+        } else {
+          setMessageErreur(`Le patient ${patientTrouve.nom} n'a pas encore été envoyé en pharmacie.`);
+        }
+      } else {
+        setMessageErreur('Dossier patient introuvable.');
+      }
+    } 
+    // 2. Sinon, c'est considéré comme un code-barres de médicament
+    else {
+      const med = medicaments.find(m => m.codeBarre === code);
+      if (!med) return setMessageErreur('Médicament introuvable. Code erroné.');
+      if (med.stock <= 0) return setMessageErreur(`Rupture de stock pour ${med.nom}.`);
+      
+      const existant = panier.find(l => l.medicament.id === med.id);
+      if (existant) {
+        if (existant.quantite >= med.stock) return setMessageErreur('Stock maximum disponible atteint.');
+        setPanier(panier.map(l => l.medicament.id === med.id ? { ...l, quantite: l.quantite + 1 } : l));
+      } else {
+        setPanier([...panier, { medicament: med, quantite: 1 }]);
+      }
+    }
+    setCodeSaisi(''); // On vide le champ pour le prochain scan
   };
 
-  // Fonctions Pharmacie
-  const ajouterAuPanier = (codeBarre: string) => {
-    setMessageErreur('');
-    const med = medicaments.find(m => m.codeBarre === codeBarre);
-    if (!med) return setMessageErreur('Médicament introuvable. Code erroné.');
-    if (med.stock <= 0) return setMessageErreur('Rupture de stock.');
-    
-    const existant = panier.find(l => l.medicament.id === med.id);
-    if (existant) {
-      if (existant.quantite >= med.stock) return setMessageErreur('Stock max atteint.');
-      setPanier(panier.map(l => l.medicament.id === med.id ? { ...l, quantite: l.quantite + 1 } : l));
-    } else setPanier([...panier, { medicament: med, quantite: 1 }]);
-    setCodeSaisi('');
+  // --- NOUVEAU : IMPRESSION TICKET 58mm ---
+  const imprimerTicket58mm = (transaction: RapportVente) => {
+    // Fenêtre invisible ou popup pour formater le ticket thermique
+    const printWindow = window.open('', '_blank', 'width=300,height=600');
+    if (!printWindow) return;
+
+    const htmlTicket = `
+      <html>
+        <head>
+          <title>Ticket de Caisse - ${transaction.id}</title>
+          <style>
+            @page { margin: 0; size: 58mm auto; }
+            body { 
+              font-family: 'Courier New', Courier, monospace; 
+              width: 58mm; 
+              padding: 5px; 
+              margin: 0;
+              font-size: 12px; 
+              color: #000;
+            }
+            .center { text-align: center; }
+            .bold { font-weight: bold; }
+            .flex { display: flex; justify-content: space-between; }
+            .divider { border-top: 1px dashed #000; margin: 5px 0; }
+            .item-row { margin-bottom: 3px; }
+          </style>
+        </head>
+        <body>
+          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">Clinique Ong Notre Grenier</div>
+          <div class="center">Reçu de Caisse</div>
+          <div class="center" style="font-size:10px;">Le ${new Date().toLocaleDateString()} à ${transaction.heure}</div>
+          <div class="divider"></div>
+          <div>Ticket N°: <span class="bold">${transaction.id}</span></div>
+          <div>Patient: ${transaction.patientNom}</div>
+          <div>Caissier: ${loggedInUser?.nomComplet}</div>
+          <div class="divider"></div>
+          <div class="flex bold"><span>Désignation</span><span>Prix</span></div>
+          <div class="divider"></div>
+          ${transaction.detailsPanier.map(l => `
+            <div class="item-row">
+              <div>${l.medicament.nom}</div>
+              <div class="flex"><span>${l.quantite} x ${l.medicament.prix}F</span><span>${l.quantite * l.medicament.prix}F</span></div>
+            </div>
+          `).join('')}
+          <div class="divider"></div>
+          <div class="flex bold" style="font-size: 14px;"><span>TOTAL NET:</span><span>${transaction.montant} F</span></div>
+          <div class="divider"></div>
+          <div class="center" style="margin-top:10px; font-size:10px;">Bonne guérison !</div>
+          <script>
+            window.onload = function() { window.print(); window.close(); }
+          </script>
+        </body>
+      </html>
+    `;
+    printWindow.document.write(htmlTicket);
+    printWindow.document.close();
   };
 
   const validerPaiement = () => {
+    // 1. Déduction des stocks
     setMedicaments(medicaments.map(med => {
       const ligne = panier.find(l => l.medicament.id === med.id);
       return ligne ? { ...med, stock: med.stock - ligne.quantite } : med;
     }));
+    
+    // 2. Création de la transaction
     const montantTotal = panier.reduce((sum, l) => sum + (l.medicament.prix * l.quantite), 0);
-    setHistoriqueVentes([{
-      id: `FA-${Math.floor(Math.random() * 10000)}`, patientNom: selectedPatientPharmacie?.nom || 'Client Externe',
-      montant: montantTotal, heure: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }, ...historiqueVentes]);
+    const nouvelleTransaction: RapportVente = {
+      id: `FA-${Math.floor(Math.random() * 10000)}`, 
+      patientNom: selectedPatientPharmacie?.nom || 'Client Externe',
+      montant: montantTotal, 
+      heure: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      detailsPanier: [...panier] // On sauvegarde le panier pour le ticket
+    };
+    
+    setHistoriqueVentes([nouvelleTransaction, ...historiqueVentes]);
+    
+    // 3. Mise à jour patient
     if (selectedPatientPharmacie) {
       setPatients(patients.map(p => p.id === selectedPatientPharmacie.id ? { ...p, statut: 'Terminé' } : p));
       setSelectedPatientPharmacie(null);
     }
     setPanier([]);
-    alert("Paiement validé avec succès ! Les stocks ont été déduits.");
+    
+    // 4. Lancement automatique de l'impression thermique
+    imprimerTicket58mm(nouvelleTransaction);
   };
 
-  // Fonctions Admin
+  // --- FONCTIONS ADMIN & EXPORT ---
   const saveUser = () => {
     if (!newUser.username || !newUser.mdp || !newUser.nomComplet) return;
     setUtilisateurs([...utilisateurs, { ...newUser, id: `U${Date.now()}` } as User]);
@@ -192,7 +285,6 @@ const ClinicDashboard: React.FC = () => {
   };
 
   const simulerScanAdmin = () => {
-    // Génère un faux code barre aléatoire pour simuler la douchette
     const codeGenere = Math.floor(100000000 + Math.random() * 900000000).toString();
     setNewProduct({...newProduct, codeBarre: codeGenere});
   };
@@ -201,6 +293,52 @@ const ClinicDashboard: React.FC = () => {
     if (!newProduct.nom || !newProduct.codeBarre) return alert("Le nom et le code barre sont obligatoires.");
     setMedicaments([...medicaments, { ...newProduct, id: `M${Date.now()}` } as Medicament]);
     setShowAddProduct(false); setNewProduct({ stock: 0, prix: 0 });
+  };
+
+  const exporterExcel = () => {
+    const enTetes = "Ref Facture;Heure;Patient;Montant(FCFA)\n";
+    const lignes = historiqueVentes.map(v => `${v.id};${v.heure};${v.patientNom};${v.montant}`).join('\n');
+    const blob = new Blob([enTetes + lignes], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Rapport_Caisse_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exporterPDF = () => {
+    // Astuce : On ouvre une fenêtre formatée proprement et on lance la boîte de dialogue système "Enregistrer au format PDF"
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    
+    let html = `
+      <html><head><title>Rapport Financier</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        table { w-full; border-collapse: collapse; margin-top: 20px; width: 100%; }
+        th, td { border: 1px solid #ccc; padding: 10px; text-align: left; }
+        th { background-color: #f0f0f0; }
+        .total { font-weight: bold; font-size: 1.2em; margin-top: 20px; text-align: right;}
+      </style></head><body>
+      <h2>Rapport des Encaissements - Clinique Ong Notre Grenier</h2>
+      <p>Date : ${new Date().toLocaleDateString()}</p>
+      <table>
+        <tr><th>Ref Facture</th><th>Heure</th><th>Patient</th><th>Montant (FCFA)</th></tr>
+    `;
+    
+    let total = 0;
+    historiqueVentes.forEach(v => {
+      html += `<tr><td>${v.id}</td><td>${v.heure}</td><td>${v.patientNom}</td><td>${v.montant}</td></tr>`;
+      total += v.montant;
+    });
+
+    html += `</table><div class="total">Total Général : ${total.toLocaleString()} FCFA</div>
+      <script>window.onload = function() { window.print(); window.close(); }</script>
+      </body></html>`;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
   };
 
 
@@ -236,7 +374,7 @@ const ClinicDashboard: React.FC = () => {
       <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-10">
         <div className="flex items-center gap-3">
           <div className="bg-blue-500 p-2 rounded-lg"><ShieldPlus size={24} className="text-white" /></div>
-          <h1 className="text-xl font-bold hidden sm:block">ONG SANTE PLUS</h1>
+          <h1 className="text-xl font-bold hidden sm:block">Clinique Ong Notre Grenier</h1>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block">
@@ -286,14 +424,14 @@ const ClinicDashboard: React.FC = () => {
               <div className="flex justify-between items-end mb-8">
                 <div>
                   <h2 className="text-3xl font-bold text-slate-800">Espace Administrateur</h2>
-                  <p className="text-slate-500 mt-1">Supervision globale de la clinique. Modification des autres services interdite.</p>
+                  <p className="text-slate-500 mt-1">Supervision globale de la clinique.</p>
                 </div>
               </div>
 
               <div className="flex gap-2 mb-6 border-b border-slate-200 pb-2">
                 <button onClick={() => setAdminSubTab('stats')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'stats' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Tableau de bord</button>
                 <button onClick={() => setAdminSubTab('stock')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'stock' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Stock Pharmacie</button>
-                <button onClick={() => setAdminSubTab('personnel')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'personnel' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Personnel (Accès)</button>
+                <button onClick={() => setAdminSubTab('personnel')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'personnel' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Personnel</button>
                 <button onClick={() => setAdminSubTab('rapports')} className={`px-4 py-2 font-bold rounded-lg transition-colors ${adminSubTab === 'rapports' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Rapports Financiers</button>
               </div>
 
@@ -396,25 +534,34 @@ const ClinicDashboard: React.FC = () => {
                 </div>
               )}
 
+              {/* NOUVEAU : EXPORT EXCEL ET PDF */}
               {adminSubTab === 'rapports' && (
-                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex-1 flex flex-col p-6">
-                  <h3 className="font-bold text-slate-800 flex items-center gap-2 mb-6"><FileBarChart size={20}/> Historique des encaissements (Caisse Pharmacie)</h3>
-                  {historiqueVentes.length === 0 ? <p className="text-slate-400 text-center py-10">Aucune vente enregistrée pour le moment.</p> : (
-                    <table className="w-full text-left text-sm border">
-                      <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-3">Ref Facture</th><th className="p-3">Heure</th><th className="p-3">Patient</th><th className="p-3 text-right">Montant Encaissé</th></tr></thead>
-                      <tbody>
-                        {historiqueVentes.map(v => (
-                          <tr key={v.id} className="border-b"><td className="p-3 font-mono text-slate-500">{v.id}</td><td className="p-3">{v.heure}</td><td className="p-3 font-bold">{v.patientNom}</td><td className="p-3 text-right font-bold text-emerald-600">{v.montant.toLocaleString()} F</td></tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
+                <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex-1 flex flex-col">
+                  <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+                    <h3 className="font-bold text-slate-800 flex items-center gap-2"><FileBarChart size={20}/> Historique des encaissements</h3>
+                    <div className="flex gap-3">
+                      <button onClick={exporterExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors"><Download size={16}/> Exporter Excel (CSV)</button>
+                      <button onClick={exporterPDF} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-colors"><FileText size={16}/> Enregistrer PDF</button>
+                    </div>
+                  </div>
+                  <div className="p-6">
+                    {historiqueVentes.length === 0 ? <p className="text-slate-400 text-center py-10">Aucune vente enregistrée pour le moment.</p> : (
+                      <table className="w-full text-left text-sm border">
+                        <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-3">Ref Facture</th><th className="p-3">Heure</th><th className="p-3">Patient</th><th className="p-3 text-right">Montant Encaissé</th></tr></thead>
+                        <tbody>
+                          {historiqueVentes.map(v => (
+                            <tr key={v.id} className="border-b"><td className="p-3 font-mono text-slate-500">{v.id}</td><td className="p-3">{v.heure}</td><td className="p-3 font-bold">{v.patientNom}</td><td className="p-3 text-right font-bold text-emerald-600">{v.montant.toLocaleString()} F</td></tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
           )}
 
-          {/* === MODULE 1: ACCUEIL (RESTAURÉ) === */}
+          {/* === MODULE 1: ACCUEIL === */}
           {activeTab === 'accueil' && (
              <div className="max-w-4xl mx-auto">
               <h2 className="text-3xl font-bold text-slate-800 mb-2">Accueil & Enregistrement</h2>
@@ -427,7 +574,7 @@ const ClinicDashboard: React.FC = () => {
                     <input type="text" value={nouveauNom} onChange={(e) => setNouveauNom(e.target.value)} placeholder="Ex: Koffi Emmanuel" className="w-full p-4 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none" />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">Service demandé (Boutons)</label>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">Service demandé</label>
                     <div className="grid grid-cols-2 gap-3">
                       <button onClick={() => setNouveauService('GEN')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all ${nouveauService === 'GEN' ? 'bg-blue-50 border-blue-500 text-blue-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}><GenMed size={18}/> Général</button>
                       <button onClick={() => setNouveauService('PED')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center transition-all ${nouveauService === 'PED' ? 'bg-emerald-50 border-emerald-500 text-emerald-700 font-bold' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}><Baby size={18}/> Pédiatrie</button>
@@ -441,7 +588,6 @@ const ClinicDashboard: React.FC = () => {
                 </button>
               </div>
 
-              {/* POPUP TICKET & QR CODE RESTAURÉ */}
               {ticketGenere && (
                 <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                   <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full overflow-hidden animate-in fade-in zoom-in duration-200">
@@ -502,7 +648,7 @@ const ClinicDashboard: React.FC = () => {
              </div>
           )}
 
-          {/* === MODULE 3: MÉDECIN (TRANSPARENCE DES PRIX) === */}
+          {/* === MODULE 3: MÉDECIN === */}
           {activeTab === 'medecin' && (
             <div className="h-full flex flex-col">
               <h2 className="text-3xl font-bold text-slate-800 mb-6">Bureau du Médecin</h2>
@@ -535,7 +681,6 @@ const ClinicDashboard: React.FC = () => {
                             <span className="text-xs bg-blue-200 text-blue-800 px-2 py-1 rounded">Prix transparents</span>
                           </h4>
                           
-                          {/* Liste des médicaments avec prix pour le médecin */}
                           <div className="bg-white rounded-xl border p-2 mb-4 max-h-40 overflow-y-auto">
                             {medicaments.map(med => {
                               const isSelected = ordonnance.some(m => m.id === med.id);
@@ -551,7 +696,6 @@ const ClinicDashboard: React.FC = () => {
                             })}
                           </div>
 
-                          {/* Résumé de l'ordonnance et Total pour accord patient */}
                           <div className="bg-white border rounded-xl p-4 flex-1 flex flex-col">
                             <p className="text-xs text-slate-400 font-bold uppercase mb-2 border-b pb-2">Accord Patient :</p>
                             <ul className="list-disc pl-4 text-sm font-bold text-slate-700 mb-4 flex-1 overflow-y-auto">
@@ -605,13 +749,20 @@ const ClinicDashboard: React.FC = () => {
                         {selectedPatientPharmacie.ordonnance?.map(m => <li key={m.id} className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-yellow-500 mt-1.5"></div>{m.nom}</li>)}
                       </ul>
                     </div>
-                  ) : <div className="mb-6 p-4 bg-slate-50 rounded-xl text-sm text-slate-400 text-center border border-dashed border-slate-300">Sélectionnez un patient à gauche pour voir son ordonnance validée.</div>}
+                  ) : <div className="mb-6 p-4 bg-slate-50 rounded-xl text-sm text-slate-400 text-center border border-dashed border-slate-300">Scannez le QR Code du patient ou sélectionnez-le à gauche.</div>}
 
                   <div className="mt-auto">
-                    <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Scanner les produits</label>
-                    <form onSubmit={e => { e.preventDefault(); ajouterAuPanier(codeSaisi); }} className="relative">
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-2 block flex items-center gap-2"><Scan size={14}/> Scanner Actif (Patient ou Produit)</label>
+                    <form onSubmit={e => { e.preventDefault(); handleTraitementScan(codeSaisi); }} className="relative">
                       <Search className="absolute left-4 top-4 text-slate-400" size={20} />
-                      <input type="text" value={codeSaisi} onChange={(e) => setCodeSaisi(e.target.value)} placeholder="Code Barre (Scan)" className="w-full pl-12 pr-4 py-4 border border-slate-300 rounded-xl font-mono text-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"/>
+                      <input 
+                        ref={inputScanRef} 
+                        type="text" 
+                        value={codeSaisi} 
+                        onChange={(e) => setCodeSaisi(e.target.value)} 
+                        placeholder="Scan QR ou Code Barre" 
+                        className="w-full pl-12 pr-4 py-4 border border-slate-300 rounded-xl font-mono text-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      />
                     </form>
                     {messageErreur && <div className="mt-3 text-red-600 text-sm font-bold bg-red-50 p-3 rounded-lg flex items-center gap-2"><AlertCircle size={16}/> {messageErreur}</div>}
                   </div>
@@ -619,7 +770,7 @@ const ClinicDashboard: React.FC = () => {
 
                 <div className="col-span-2 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden">
                   <div className="flex-1 p-6 overflow-y-auto bg-slate-50/50">
-                    {panier.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-slate-300"><Scan size={64} className="mb-4 opacity-20" /><p className="text-slate-500 font-medium">Le panier est vide</p></div> : (
+                    {panier.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-slate-300"><Scan size={64} className="mb-4 opacity-20" /><p className="text-slate-500 font-medium">Scannez un produit pour l'ajouter</p></div> : (
                       <div className="flex flex-col gap-3">
                         {panier.map((ligne, i) => (
                           <div key={i} className="flex justify-between items-center p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
@@ -640,7 +791,7 @@ const ClinicDashboard: React.FC = () => {
                       <p className="text-5xl font-black text-emerald-400">{panier.reduce((t, l) => t + (l.medicament.prix * l.quantite), 0).toLocaleString()} <span className="text-2xl text-emerald-600">FCFA</span></p>
                     </div>
                     <button onClick={validerPaiement} disabled={panier.length === 0} className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-500 text-white p-5 rounded-xl font-bold flex justify-center items-center gap-3 text-lg transition-all">
-                      <Printer size={24} /> Valider, Imprimer le reçu et Encaisser
+                      <Printer size={24} /> Valider l'Encaissement & Imprimer (58mm)
                     </button>
                   </div>
                 </div>
