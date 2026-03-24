@@ -17,14 +17,13 @@ import {
 // ============================================================================
 // CONFIGURATION FIREBASE
 // ============================================================================
-// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBmeFkD6L_U9eYymnO8rBGddUisJb0ysqA",
-  authDomain: "onggrenier.firebaseapp.com",
-  projectId: "onggrenier",
-  storageBucket: "onggrenier.firebasestorage.app",
-  messagingSenderId: "728693944134",
-  appId: "1:728693944134:web:e9d20c5ff05462a0cfff47"
+  apiKey: "VOTRE_API_KEY",
+  authDomain: "votre-projet.firebaseapp.com",
+  projectId: "votre-projet",
+  storageBucket: "votre-projet.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123456789:web:abcdef"
 };
 
 let app: any, auth: any, db: any;
@@ -127,7 +126,6 @@ const ClinicDashboard: React.FC = () => {
   useEffect(() => {
     let html5QrcodeScanner: Html5QrcodeScanner | null = null;
     if (isCameraActive) {
-      // Un setTimeout garantit que la div #reader est bien injectée dans le DOM avant d'initialiser
       setTimeout(() => {
         const element = document.getElementById("reader");
         if (element) {
@@ -257,7 +255,7 @@ const ClinicDashboard: React.FC = () => {
         .ticket-num { font-size: 28px; margin: 10px 0; border: 2px solid #000; padding: 5px; }
         .qr-img { width: 120px; height: 120px; margin: 10px auto; }
       </style></head><body>
-        <div class="bold" style="font-size:16px;">Clinique Ong Notre Grenier</div>
+        <div class="bold" style="font-size:16px;">ONG SANTE PLUS</div>
         <div style="font-size:12px; margin-bottom: 10px;">${new Date().toLocaleDateString()} - ${ticketGenere.heureArrivee}</div>
         <div>Ticket d'attente</div>
         <div class="ticket-num bold">${ticketGenere.ticket}</div>
@@ -341,12 +339,10 @@ const ClinicDashboard: React.FC = () => {
     setCodeSaisi(''); 
   };
 
-  // NOUVEAU: Fonction pour modifier la quantité directement dans le panier du client
   const updateQuantitePanier = (idMed: string, delta: number) => {
     setPanier(panier.map(l => {
       if (l.medicament.id === idMed) {
         const nouvelleQte = l.quantite + delta;
-        // On s'assure de ne pas descendre sous 1, et de ne pas dépasser le stock
         if (nouvelleQte < 1) return l;
         if (nouvelleQte > l.medicament.stock) {
           setMessageErreur(`Stock maximum atteint pour ${l.medicament.nom}`);
@@ -372,7 +368,7 @@ const ClinicDashboard: React.FC = () => {
     });
     setMedicaments(newMeds);
     
-    // 2. Création de la transaction pour le Rapport Responsable
+    // 2. Création de la transaction
     const montantTotal = panier.reduce((sum, l) => sum + (l.medicament.prix * l.quantite), 0);
     const dateActuelle = new Date();
     const nouvelleTransaction: RapportVente = {
@@ -384,11 +380,11 @@ const ClinicDashboard: React.FC = () => {
       detailsPanier: [...panier] 
     };
     
-    // Ajout local IMMEDIAT (garantit que l'Admin le voit même si Firebase échoue)
+    // Ajout local et Firebase
     setHistoriqueVentes([nouvelleTransaction, ...historiqueVentes]);
     syncToFirebase('ventes', nouvelleTransaction.id, nouvelleTransaction);
     
-    // 3. Mise à jour du statut patient
+    // 3. Mise à jour du patient
     if (selectedPatientPharmacie) {
       const patientAjourne = { ...selectedPatientPharmacie, statut: 'Terminé' as const };
       setPatients(patients.map(p => p.id === selectedPatientPharmacie.id ? patientAjourne : p));
@@ -396,7 +392,6 @@ const ClinicDashboard: React.FC = () => {
       syncToFirebase('patients', patientAjourne.id, patientAjourne);
     }
     
-    // 4. Nettoyage et Affichage Reçu
     setPanier([]);
     setRecuApercu(nouvelleTransaction);
   };
@@ -420,7 +415,7 @@ const ClinicDashboard: React.FC = () => {
           </style>
         </head>
         <body>
-          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">Clinique Ong Notre Grenier</div>
+          <div class="center bold" style="font-size:14px; margin-bottom: 2px;">ONG SANTE PLUS</div>
           <div class="center">Reçu de Caisse</div>
           <div class="center" style="font-size:10px;">Le ${transaction.date} à ${transaction.heure}</div>
           <div class="divider"></div>
@@ -517,7 +512,7 @@ const ClinicDashboard: React.FC = () => {
     if (!printWindow) return;
     let html = `<html><head><title>Rapport Financier</title>
       <style>body { font-family: Arial; padding: 20px; } table { border-collapse: collapse; width: 100%; margin-top: 20px;} th, td { border: 1px solid #ccc; padding: 10px; text-align: left; } th { background-color: #f0f0f0; } .total { font-weight: bold; font-size: 1.2em; margin-top: 20px; text-align: right;}</style></head><body>
-      <h2>Rapport des Encaissements - Clinique Ong Notre Grenier</h2><p>Date : ${new Date().toLocaleDateString()}</p>
+      <h2>Rapport des Encaissements - ONG SANTE PLUS</h2><p>Date : ${new Date().toLocaleDateString()}</p>
       <table><tr><th>Ref Facture</th><th>Date/Heure</th><th>Patient</th><th>Montant (FCFA)</th></tr>`;
     let total = 0;
     historiqueVentes.forEach(v => {
@@ -540,7 +535,7 @@ const ClinicDashboard: React.FC = () => {
         <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
           <div className="text-center mb-8">
             <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30"><ShieldPlus size={32} className="text-white" /></div>
-            <h1 className="text-2xl font-black text-slate-800 tracking-tight">Clinique Ong Notre Grenier</h1>
+            <h1 className="text-2xl font-black text-slate-800 tracking-tight">ONG SANTE PLUS</h1>
             <p className="text-slate-500 text-sm mt-1">Portail de Gestion Sécurisé</p>
           </div>
           <form onSubmit={handleLogin} className="flex flex-col gap-4">
@@ -572,7 +567,7 @@ const ClinicDashboard: React.FC = () => {
             {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
           <div className="bg-blue-500 p-2 rounded-lg"><ShieldPlus size={24} className="text-white" /></div>
-          <h1 className="text-xl font-bold hidden sm:block">Clinique Ong Notre Grenier</h1>
+          <h1 className="text-xl font-bold hidden sm:block">ONG SANTE PLUS</h1>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block"><p className="text-sm font-bold text-emerald-400">Connecté(e)</p><p className="text-sm font-bold">{loggedInUser.nomComplet} ({loggedInUser.role})</p></div>
@@ -621,7 +616,7 @@ const ClinicDashboard: React.FC = () => {
                  <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col w-full overflow-hidden">
                  <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
                    <h3 className="font-bold flex items-center gap-2"><Package size={20}/> Base de médicaments</h3>
-                   <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-3">
+                   <div className="flex w-full sm:w-auto gap-3">
                      <div className="relative flex-1 sm:w-64">
                        <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
                        <input type="text" placeholder="Rechercher..." value={searchAdminStock} onChange={e => setSearchAdminStock(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg outline-none focus:border-blue-500" />
@@ -955,7 +950,6 @@ const ClinicDashboard: React.FC = () => {
                           <div key={i} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 bg-white rounded-xl border border-slate-200 shadow-sm gap-4">
                             <div className="min-w-0 flex-1"><h4 className="font-bold text-slate-800 truncate">{ligne.medicament.nom}</h4><p className="text-xs text-slate-400 font-mono mt-1">Ref: {ligne.medicament.codeBarre}</p></div>
                             
-                            {/* NOUVEAU: Modification des quantités par la caissière */}
                             <div className="flex items-center gap-4 sm:gap-6 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-3 sm:pt-0 mt-2 sm:mt-0">
                               <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
                                 <button onClick={() => updateQuantitePanier(ligne.medicament.id, -1)} className="bg-white px-2 py-1 rounded shadow-sm text-slate-700 font-bold hover:bg-slate-200">-</button>
@@ -987,7 +981,7 @@ const ClinicDashboard: React.FC = () => {
                         <h3 className="text-slate-800 font-bold mb-4 flex items-center gap-2"><Search size={20}/> Aperçu du ticket</h3>
                         
                         <div className="bg-white p-4 w-[58mm] min-h-[100mm] shadow-lg mb-6 font-mono text-[10px] text-black border border-slate-300 mx-auto">
-                          <div className="text-center font-bold text-sm mb-1">Clinique Ong Notre Grenier</div>
+                          <div className="text-center font-bold text-sm mb-1">ONG SANTE PLUS</div>
                           <div className="text-center mb-1">Reçu de Caisse</div>
                           <div className="text-center text-[8px]">Le {recuApercu.date} à {recuApercu.heure}</div>
                           <div className="border-t border-dashed border-black my-2"></div>
