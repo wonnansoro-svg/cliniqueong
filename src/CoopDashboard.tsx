@@ -17,6 +17,12 @@ import {
 // ============================================================================
 // CONFIGURATION FIREBASE ONG GRENIER
 // ============================================================================
+// Import the functions you need from the SDKs you need
+
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyBmeFkD6L_U9eYymnO8rBGddUisJb0ysqA",
   authDomain: "onggrenier.firebaseapp.com",
@@ -25,6 +31,9 @@ const firebaseConfig = {
   messagingSenderId: "728693944134",
   appId: "1:728693944134:web:e9d20c5ff05462a0cfff47"
 };
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
 
 let app: any, auth: any, db: any;
 try {
