@@ -1,0 +1,20 @@
+// public/sw.js
+const CACHE_NAME = 'sante-plus-v1';
+
+// On installe le Service Worker
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+});
+
+// On active et on nettoie les vieux caches
+self.addEventListener('activate', (event) => {
+  event.waitUntil(clients.claim());
+});
+
+// Intercepte les requêtes réseau (Indispensable pour déclencher le bouton "Installer")
+self.addEventListener('fetch', (event) => {
+  // Pour Firebase et les API externes, on laisse passer la requête normalement
+  event.respondWith(fetch(event.request).catch(() => {
+    return new Response('Hors ligne');
+  }));
+});
