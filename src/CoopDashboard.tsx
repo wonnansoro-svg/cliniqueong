@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, collection, addDoc, updateDoc, doc, setDoc, getDocs, onSnapshot, deleteDoc } from 'firebase/firestore'; // AJOUT DE deleteDoc
+import { getFirestore, collection, addDoc, updateDoc, doc, setDoc, getDocs, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { 
   Users, Activity, Stethoscope, Pill, 
   Settings, CreditCard, QrCode, Printer,
@@ -17,12 +17,6 @@ import {
 // ============================================================================
 // CONFIGURATION FIREBASE ONG GRENIER
 // ============================================================================
-// Import the functions you need from the SDKs you need
-
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyBmeFkD6L_U9eYymnO8rBGddUisJb0ysqA",
   authDomain: "onggrenier.firebaseapp.com",
@@ -32,9 +26,7 @@ const firebaseConfig = {
   appId: "1:728693944134:web:e9d20c5ff05462a0cfff47"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
-
+// Initialisation unique et sécurisée pour éviter l'erreur de compilation Vercel
 let app: any, auth: any, db: any;
 try {
   app = initializeApp(firebaseConfig);
@@ -49,10 +41,10 @@ type Role = 'Responsable' | 'Medecin' | 'Infirmier' | 'Caissiere' | 'Accueil' | 
 type ServiceType = 'PED' | 'GEN' | 'MAT' | 'CHIR';
 
 const PRIX_CONSULTATION: Record<ServiceType, number> = {
-  GEN: 1000,
-  PED: 1000,
-  MAT: 1000,
-  CHIR: 1000
+  GEN: 5000,
+  PED: 4000,
+  MAT: 6000,
+  CHIR: 10000
 };
 
 interface User { id: string; username: string; mdp: string; role: Role; nomComplet: string; }
@@ -175,7 +167,6 @@ const ClinicDashboard: React.FC = () => {
     catch (e) { console.error("Firebase offline mode", e); }
   };
 
-  // NOUVEAU : Fonction pour supprimer réellement de Firebase
   const removeFromFirebase = async (colName: string, docId: string) => {
     if (!db) return;
     try { await deleteDoc(doc(db, colName, docId)); } 
@@ -306,7 +297,7 @@ const ClinicDashboard: React.FC = () => {
   }, [isAdminCameraActive]);
 
 
-  // --- AUTHENTIFICATION HYBRIDE ---
+  // --- AUTHENTIFICATION ---
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
@@ -383,13 +374,13 @@ const ClinicDashboard: React.FC = () => {
     const htmlTicket = `
       <html><head><title>Ticket Patient</title>
       <style>
-        body { font-family: 'Arial', sans-serif; width: 58mm; padding: 10px; margin: 0; text-align: center; }
+        body { font-family: 'Arial', sans-serif; width: 58mm; padding: 10px; margin: 0 auto; text-align: center; }
         .bold { font-weight: bold; }
         .ticket-num { font-size: 28px; margin: 10px 0; border: 2px solid #000; padding: 5px; }
-        .qr-img { width: 120px; height: 120px; margin: 10px auto; }
+        .qr-img { width: 120px; height: 120px; margin: 10px auto; display: block; }
         .price { font-size: 14px; margin-top: 10px; border-top: 1px dashed #000; padding-top: 5px;}
       </style></head><body>
-        <div class="bold" style="font-size:16px;">Clinique Ong Notre Grenier</div>
+        <div class="bold" style="font-size:16px;">Clinique ONG Grenier</div>
         <div style="font-size:12px; margin-bottom: 10px;">${new Date().toLocaleDateString()} - ${ticketGenere.heureArrivee}</div>
         <div>Ticket d'attente</div>
         <div class="ticket-num bold">${ticketGenere.ticket}</div>
@@ -480,38 +471,41 @@ const ClinicDashboard: React.FC = () => {
     setPanier([]); setRecuApercu(nouvelleTransaction);
   };
 
+  // NOUVEAU DESIGN D'IMPRESSION MOBILE (PHARMACIE)
   const lancerImpressionThermique = (transaction: RapportVente) => {
     const printWindow = window.open('', '_blank', 'width=300,height=600');
     if (!printWindow) return;
     const htmlTicket = `
       <html><head><title>Ticket de Caisse - ${transaction.id}</title>
       <style>
-        @page { margin: 0; size: 58mm auto; }
-        body { font-family: 'Courier New', Courier, monospace; width: 58mm; padding: 5px; margin: 0; font-size: 12px; color: #000; }
-        .center { text-align: center; } .bold { font-weight: bold; }
+        body { font-family: 'Arial', sans-serif; width: 58mm; padding: 10px; margin: 0 auto; text-align: center; }
+        .bold { font-weight: bold; }
         .flex { display: flex; justify-content: space-between; }
         .divider { border-top: 1px dashed #000; margin: 5px 0; }
-        .item-row { margin-bottom: 3px; }
-        .qr-code { width: 100px; height: 100px; margin: 10px auto; display: block; }
+        .item-row { margin-bottom: 3px; font-size: 11px; text-align: left; }
+        .qr-code { width: 120px; height: 120px; margin: 10px auto; display: block; }
       </style></head><body>
-        <div class="center bold" style="font-size:14px; margin-bottom: 2px;">Clinique Ong Notre Grenier</div>
-        <div class="center">Reçu de Caisse</div>
-        <div class="center" style="font-size:10px;">Le ${transaction.date} à ${transaction.heure}</div>
+        <div class="bold" style="font-size:16px; margin-bottom: 2px;">Clinique ONG Grenier</div>
+        <div style="font-size:12px;">Reçu de Pharmacie</div>
+        <div style="font-size:10px; margin-bottom: 10px;">Le ${transaction.date} à ${transaction.heure}</div>
         <div class="divider"></div>
-        <div>Ticket N°: <span class="bold">${transaction.id}</span></div>
-        <div>Patient: ${transaction.patientNom}</div>
-        <div>Caissier: ${loggedInUser?.nomComplet}</div>
+        <div style="font-size:14px;">Ticket N°: <span class="bold">${transaction.id}</span></div>
+        <div style="font-size:12px;">Patient: <span class="bold">${transaction.patientNom}</span></div>
+        <div style="font-size:12px;">Caissier: ${loggedInUser?.nomComplet}</div>
         <div class="divider"></div>
-        <div class="flex bold"><span>Désignation</span><span>Prix</span></div>
+        <div class="flex bold" style="font-size:12px;"><span>Désignation</span><span>Prix</span></div>
         <div class="divider"></div>
         ${transaction.detailsPanier.map(l => `
-          <div class="item-row"><div>${l.medicament.nom}</div><div class="flex"><span>${l.quantite} x ${l.medicament.prix}F</span><span>${l.quantite * l.medicament.prix}F</span></div></div>
+          <div class="item-row flex">
+            <span style="flex:1;">${l.quantite}x ${l.medicament.nom}</span>
+            <span>${l.quantite * l.medicament.prix}F</span>
+          </div>
         `).join('')}
         <div class="divider"></div>
-        <div class="flex bold" style="font-size: 14px;"><span>TOTAL NET:</span><span>${transaction.montant} F</span></div>
+        <div class="flex bold" style="font-size: 16px;"><span>TOTAL NET:</span><span>${transaction.montant} F</span></div>
         <div class="divider"></div>
         <img class="qr-code" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${transaction.id}" alt="QR Code Reçu" />
-        <div class="center" style="margin-top:5px; font-size:10px;">Bonne guérison !</div>
+        <div style="margin-top:5px; font-size:10px;">Bonne guérison !</div>
         <script>window.onload = function() { window.print(); window.close(); }</script>
       </body></html>
     `;
@@ -692,7 +686,7 @@ const ClinicDashboard: React.FC = () => {
           <div className="bg-red-600 p-2 rounded-lg shadow-sm flex items-center justify-center">
             <Plus size={24} strokeWidth={4} className="text-white" />
           </div>
-          <h1 className="text-xl font-bold hidden sm:block tracking-wide">Clinique Ong Notre Grenier</h1>
+          <h1 className="text-xl font-bold hidden sm:block tracking-wide">Clinique ONG Grenier</h1>
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block"><p className="text-sm font-bold text-emerald-400">Connecté(e)</p><p className="text-sm font-bold text-blue-100">{loggedInUser.nomComplet} ({loggedInUser.role})</p></div>
@@ -947,7 +941,7 @@ const ClinicDashboard: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                <button onClick={genererTicket} disabled={!nouveauNom.trim()} className="w-full bg-blue-600 hover:bg-blue-700 transition-colors text-white p-4 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 shadow-md disabled:shadow-none"><QrCode size={20} /> Valider & Générer le Ticket ({PRIX_CONSULTATION[nouveauService]} F)</button>
+                <button onClick={genererTicket} disabled={!nouveauNom.trim()} className="w-full bg-blue-600 hover:bg-blue-700 transition-colors text-white p-4 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 shadow-md disabled:shadow-none"><QrCode size={20} /> Valider & Générer Ticket du Jour ({PRIX_CONSULTATION[nouveauService]} F)</button>
               </div>
 
               {ticketGenere && (
@@ -963,7 +957,7 @@ const ClinicDashboard: React.FC = () => {
                       </div>
                       <h2 className="text-xl font-black text-blue-950">{ticketGenere.nom}</h2>
                       <p className="text-slate-500 text-sm mb-2">QR de suivi (Dossier) : <span className="font-mono text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{ticketGenere.dossierId}</span></p>
-                      <div className="bg-emerald-50 text-emerald-800 p-2 rounded-lg font-bold text-sm border border-emerald-200 shadow-sm">Frais de Consultation : {PRIX_CONSULTATION[ticketGenere.service]} FCFA<br/><span className="text-[10px] font-normal italic text-emerald-600">Automatiquement enregistré en Caisse.</span></div>
+                      <div className="bg-emerald-50 text-emerald-800 p-2 rounded-lg font-bold text-sm border border-emerald-200 shadow-sm">Frais Consultation : {PRIX_CONSULTATION[ticketGenere.service]} FCFA<br/><span className="text-[10px] font-normal italic text-emerald-600">Enregistré dans le rapport de caisse.</span></div>
                     </div>
                     <div className="p-4 bg-slate-50 flex gap-3 border-t border-slate-200">
                       <button onClick={() => setTicketGenere(null)} className="flex-1 bg-white border border-slate-300 text-slate-700 py-3 rounded-xl font-bold hover:bg-slate-100 transition-colors">Fermer</button>
@@ -1103,7 +1097,7 @@ const ClinicDashboard: React.FC = () => {
                     <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-xl shadow-inner">
                       <div className="flex justify-between items-center mb-2 border-b border-yellow-200 pb-2">
                         <h4 className="text-xs font-black text-yellow-800 uppercase flex items-center gap-1"><FileText size={16}/> À délivrer</h4>
-                        <button onClick={() => setSelectedPatientPharmacie(null)} className="text-xs font-bold text-red-600 bg-white px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">Annuler</button>
+                        <button onClick={() => setSelectedPatientPharmacie(null)} className="text-xs font-bold text-red-600 bg-white px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">Fermer</button>
                       </div>
                       <ul className="text-sm font-bold text-slate-800 mt-2 space-y-1">
                         {selectedPatientPharmacie.ordonnance?.map(o => (
@@ -1121,7 +1115,7 @@ const ClinicDashboard: React.FC = () => {
 
                   <div className="mt-auto">
                     <div className="flex justify-between items-center mb-2">
-                      <label className="text-xs font-bold text-blue-900 uppercase flex items-center gap-2"><Scan size={14}/> Caméra (Scanner)</label>
+                      <label className="text-xs font-bold text-blue-900 uppercase flex items-center gap-2"><Scan size={14}/> Scanner Actif</label>
                       <button onClick={() => setIsCameraActive(!isCameraActive)} className={`p-2 rounded-lg text-white transition-colors shadow-sm ${isCameraActive ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-600 hover:bg-blue-700'}`}><Camera size={16} /></button>
                     </div>
 
@@ -1161,7 +1155,7 @@ const ClinicDashboard: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <div className="p-6 bg-blue-900 text-white mt-auto sm:rounded-none">
+                  <div className="p-6 bg-blue-900 text-white mt-auto rounded-t-2xl sm:rounded-none">
                     <div className="flex justify-between items-end mb-6">
                       <p className="text-blue-200 font-bold uppercase tracking-wider text-sm">Net à payer</p>
                       <p className="text-4xl font-black text-emerald-400">{panier.reduce((t, l) => t + (l.medicament.prix * l.quantite), 0).toLocaleString()} <span className="text-2xl text-emerald-500">FCFA</span></p>
@@ -1174,32 +1168,32 @@ const ClinicDashboard: React.FC = () => {
                   {/* APERÇU DU REÇU CAISSE */}
                   {recuApercu && (
                     <div className="absolute inset-0 bg-blue-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                      <div className="bg-slate-50 p-6 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full border border-blue-200">
+                      <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full border border-blue-200">
                         <h3 className="text-blue-950 font-black mb-4 flex items-center gap-2"><Search size={20} className="text-blue-600"/> Aperçu du ticket</h3>
-                        <div className="bg-white p-4 w-[58mm] min-h-[100mm] shadow-md mb-6 font-mono text-[10px] text-black border border-slate-300 mx-auto">
-                          <div className="text-center font-bold text-sm mb-1">Clinique Ong Notre Grenier</div>
-                          <div className="text-center mb-1">Reçu de Caisse</div>
+                        <div className="bg-slate-50 p-4 w-[58mm] min-h-[100mm] shadow-md mb-6 font-mono text-[10px] text-black border border-slate-300 mx-auto rounded-lg">
+                          <div className="text-center font-bold text-sm mb-1">Clinique ONG Grenier</div>
+                          <div className="text-center mb-1">Reçu de Pharmacie</div>
                           <div className="text-center text-[8px]">Le {recuApercu.date} à {recuApercu.heure}</div>
-                          <div className="border-t border-dashed border-black my-2"></div>
-                          <div>Ticket N°: <span className="font-bold">{recuApercu.id}</span></div>
-                          <div>Patient: {recuApercu.patientNom}</div>
+                          <div className="border-t border-dashed border-slate-400 my-2"></div>
+                          <div>N°: <span className="font-bold">{recuApercu.id}</span></div>
+                          <div>Client: {recuApercu.patientNom}</div>
                           <div>Caissier: {loggedInUser?.nomComplet}</div>
-                          <div className="border-t border-dashed border-black my-2"></div>
+                          <div className="border-t border-dashed border-slate-400 my-2"></div>
                           <div className="flex justify-between font-bold"><span>Désignation</span><span>Prix</span></div>
-                          <div className="border-t border-dashed border-black my-2"></div>
+                          <div className="border-t border-dashed border-slate-400 my-2"></div>
                           {recuApercu.detailsPanier.map((l, idx) => (
                             <div key={idx} className="mb-1">
-                              <div>{l.medicament.nom}</div>
+                              <div className="truncate">{l.medicament.nom}</div>
                               <div className="flex justify-between"><span>{l.quantite} x {l.medicament.prix}F</span><span>{l.quantite * l.medicament.prix}F</span></div>
                             </div>
                           ))}
-                          <div className="border-t border-dashed border-black my-2"></div>
-                          <div className="flex justify-between font-bold text-xs"><span>TOTAL NET:</span><span>{recuApercu.montant} F</span></div>
-                          <div className="border-t border-dashed border-black my-2"></div>
+                          <div className="border-t border-dashed border-slate-400 my-2"></div>
+                          <div className="flex justify-between font-bold text-xs text-blue-800"><span>TOTAL NET:</span><span>{recuApercu.montant} F</span></div>
+                          <div className="border-t border-dashed border-slate-400 my-2"></div>
                           <div className="flex justify-center my-2">
                             <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${recuApercu.id}`} alt="QR" className="w-16 h-16 object-contain" />
                           </div>
-                          <div className="text-center mt-2 text-[8px]">Bonne guérison !</div>
+                          <div className="text-center mt-2 text-[8px] italic">Prompt rétablissement !</div>
                         </div>
                         <div className="flex gap-3 w-full">
                           <button onClick={() => setRecuApercu(null)} className="flex-1 bg-white border border-slate-300 text-slate-700 p-3 rounded-xl font-bold hover:bg-slate-100 transition-colors shadow-sm">Annuler</button>
