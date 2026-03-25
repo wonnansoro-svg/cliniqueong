@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode'; // REMPLACEMENT TOTAL DE LA LOGIQUE SCANNER
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFirestore, collection, addDoc, updateDoc, doc, setDoc, getDocs, onSnapshot } from 'firebase/firestore';
@@ -39,7 +39,6 @@ try {
 type Role = 'Responsable' | 'Medecin' | 'Infirmier' | 'Caissiere' | 'Accueil' | 'Superviseur' | 'President';
 type ServiceType = 'PED' | 'GEN' | 'MAT' | 'CHIR';
 
-// NOUVEAU : Tarifs des consultations
 const PRIX_CONSULTATION: Record<ServiceType, number> = {
   GEN: 5000,
   PED: 4000,
@@ -56,10 +55,15 @@ interface RapportVente { id: string; patientNom: string; montant: number; heure:
 
 interface Patient {
   id: string; // ID unique de la visite
-  dossierId?: string; // ID unique et permanent du dossier patient
-  ticket: string; nom: string; service: ServiceType;
+  dossierId?: string; // ID permanent du dossier
+  ticket: string; 
+  nom: string; 
+  service: ServiceType;
   statut: 'Accueil' | 'Triage' | 'Consultation' | 'Pharmacie' | 'Terminé';
-  heureArrivee: string; constantes?: ConstantesVitales; ordonnance?: LigneOrdonnance[];
+  heureArrivee: string; 
+  dateArrivee: string; // NOUVEAU: Permet de réinitialiser les tickets chaque jour
+  constantes?: ConstantesVitales; 
+  ordonnance?: LigneOrdonnance[];
 }
 
 const ClinicDashboard: React.FC = () => {
@@ -83,28 +87,20 @@ const ClinicDashboard: React.FC = () => {
   const [adminSubTab, setAdminSubTab] = useState<'stats' | 'stock' | 'personnel' | 'rapports'>('stats');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
-  // --- BASE DE DONNÉES HYBRIDE (Local + Firebase) ---
-  const [patients, setPatients] = useState<Patient[]>([
-    { id: 'VIS-001', dossierId: 'DOS-0012', ticket: 'GEN-001', nom: 'Kouassi Aya', service: 'GEN', statut: 'Triage', heureArrivee: '08:15' },
-  ]);
-  
-  const [medicaments, setMedicaments] = useState<Medicament[]>([
-    { id: 'M1', codeBarre: '123456789', nom: 'Paracétamol 500mg', stock: 150, prix: 1500 },
-    { id: 'M2', codeBarre: '987654321', nom: 'Amoxicilline Sachet', stock: 5, prix: 3500 },
-  ]);
-
+  // --- BASE DE DONNÉES HYBRIDE ---
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [medicaments, setMedicaments] = useState<Medicament[]>([]);
   const [historiqueVentes, setHistoriqueVentes] = useState<RapportVente[]>([]);
 
-  // --- ÉTATS RECHERCHES & ACCUEIL ---
-  const [searchMedecin, setSearchMedecin] = useState('');
-  const [searchAdminStock, setSearchAdminStock] = useState('');
+  // --- ÉTATS ACCUEIL ---
   const [nouveauNom, setNouveauNom] = useState('');
   const [nouveauService, setNouveauService] = useState<ServiceType>('GEN');
   const [ticketGenere, setTicketGenere] = useState<Patient | null>(null);
-  
-  // NOUVEAU: Gestion des anciens dossiers à l'accueil
   const [ancienDossierId, setAncienDossierId] = useState<string | null>(null);
-  const [isAccueilCameraActive, setIsAccueilCameraActive] = useState(false);
+  
+  // --- ÉTATS RECHERCHES ---
+  const [searchMedecin, setSearchMedecin] = useState('');
+  const [searchAdminStock, setSearchAdminStock] = useState('');
 
   // --- ÉTATS SPÉCIFIQUES ---
   const [selectedPatientTriage, setSelectedPatientTriage] = useState<Patient | null>(null);
@@ -127,6 +123,7 @@ const ClinicDashboard: React.FC = () => {
 
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isAdminCameraActive, setIsAdminCameraActive] = useState(false);
+  const [isAccueilCameraActive, setIsAccueilCameraActive] = useState(false);
 
   // ==========================================================================
   // SYNERGIE TEMPS RÉEL (FIREBASE)
@@ -137,20 +134,20 @@ const ClinicDashboard: React.FC = () => {
     const unsubPatients = onSnapshot(collection(db, 'patients'), (snapshot) => {
       const data: Patient[] = [];
       snapshot.forEach(doc => data.push(doc.data() as Patient));
-      if (data.length > 0) setPatients(data);
+      setPatients(data);
     });
 
     const unsubMedicaments = onSnapshot(collection(db, 'medicaments'), (snapshot) => {
       const data: Medicament[] = [];
       snapshot.forEach(doc => data.push(doc.data() as Medicament));
-      if (data.length > 0) setMedicaments(data);
+      setMedicaments(data);
     });
 
     const unsubVentes = onSnapshot(collection(db, 'ventes'), (snapshot) => {
       const data: RapportVente[] = [];
       snapshot.forEach(doc => data.push(doc.data() as RapportVente));
       data.sort((a, b) => new Date(b.date + ' ' + b.heure).getTime() - new Date(a.date + ' ' + a.heure).getTime());
-      if (data.length > 0) setHistoriqueVentes(data);
+      setHistoriqueVentes(data);
     });
 
     const unsubUtilisateurs = onSnapshot(collection(db, 'utilisateurs'), (snapshot) => {
@@ -159,53 +156,43 @@ const ClinicDashboard: React.FC = () => {
       if (data.length > 0) setUtilisateurs(data);
     });
 
-    return () => {
-      unsubPatients();
-      unsubMedicaments();
-      unsubVentes();
-      unsubUtilisateurs();
-    };
+    return () => { unsubPatients(); unsubMedicaments(); unsubVentes(); unsubUtilisateurs(); };
   }, []);
 
   const syncToFirebase = async (colName: string, docId: string, data: any) => {
     if (!db) return;
-    try {
-      await setDoc(doc(db, colName, docId), data, { merge: true });
-    } catch (e) { 
-      console.error("Erreur de sync Firebase (Mode hors ligne conservé):", e); 
-    }
+    try { await setDoc(doc(db, colName, docId), data, { merge: true }); } 
+    catch (e) { console.error("Firebase offline mode", e); }
   };
 
 
   // ==========================================================================
-  // GESTION STABILISÉE DES CAMÉRAS (SCANNERS)
+  // NOUVEAU SYSTÈME DE SCANNER (HTML5QRCODE NATIF - FORCÉ CAMÉRA ARRIÈRE)
   // ==========================================================================
   
+  // Pharmacie - Logique de scan
   const handleTraitementScan = useCallback((code: string) => {
     setMessageErreur('');
     if (code.startsWith('DOS-')) {
-      // On cherche par dossierId ou par id(pour rétrocompatibilité)
       const patientTrouve = patients.find(p => (p.dossierId === code || p.id === code) && p.statut === 'Pharmacie');
-      if (patientTrouve) {
-        setSelectedPatientPharmacie(patientTrouve);
-      } else {
-        setMessageErreur('Dossier patient introuvable ou non envoyé en pharmacie.');
-      }
+      if (patientTrouve) setSelectedPatientPharmacie(patientTrouve);
+      else setMessageErreur('Dossier patient introuvable ou non envoyé en pharmacie.');
     } else {
       const med = medicaments.find(m => m.codeBarre === code);
       if (!med) return setMessageErreur('Médicament introuvable.');
       if (med.stock <= 0) return setMessageErreur(`Rupture de stock pour ${med.nom}.`);
       
-      const existant = panier.find(l => l.medicament.id === med.id);
-      if (existant) {
-        if (existant.quantite >= med.stock) return setMessageErreur('Stock maximum atteint.');
-        setPanier(prev => prev.map(l => l.medicament.id === med.id ? { ...l, quantite: l.quantite + 1 } : l));
-      } else {
-        setPanier(prev => [...prev, { medicament: med, quantite: 1 }]);
-      }
+      setPanier(prev => {
+        const existant = prev.find(l => l.medicament.id === med.id);
+        if (existant) {
+          if (existant.quantite >= med.stock) { setMessageErreur('Stock maximum atteint.'); return prev; }
+          return prev.map(l => l.medicament.id === med.id ? { ...l, quantite: l.quantite + 1 } : l);
+        }
+        return [...prev, { medicament: med, quantite: 1 }];
+      });
     }
     setCodeSaisi(''); 
-  }, [patients, medicaments, panier]);
+  }, [patients, medicaments]);
 
   const handleTraitementScanRef = useRef(handleTraitementScan);
   useEffect(() => { handleTraitementScanRef.current = handleTraitementScan; }, [handleTraitementScan]);
@@ -217,87 +204,93 @@ const ClinicDashboard: React.FC = () => {
     }
   }, [activeTab, recuApercu, isCameraActive]);
 
-  // NOUVEAU: Scanner Accueil (Recherche de dossier)
+  // Scanner 1 : Accueil
   useEffect(() => {
-    let html5QrcodeScanner: Html5QrcodeScanner | null = null;
+    let html5QrCode: Html5Qrcode | null = null;
     if (isAccueilCameraActive) {
       setTimeout(() => {
-        const element = document.getElementById("accueil-reader");
-        if (element) {
-          html5QrcodeScanner = new Html5QrcodeScanner(
-            "accueil-reader", { fps: 10, qrbox: { width: 250, height: 250 }, videoConstraints: { facingMode: "environment" } }, false
-          );
-          html5QrcodeScanner.render(
-            (decodedText) => {
-              if (decodedText.startsWith('DOS-')) {
-                const pastVisits = patients.filter(p => p.dossierId === decodedText || p.id === decodedText);
-                if (pastVisits.length > 0) {
-                  setAncienDossierId(decodedText);
-                  setNouveauNom(pastVisits[0].nom); // On récupère le nom
-                } else {
-                  alert("Dossier inconnu dans le système.");
-                }
+        const el = document.getElementById("accueil-reader");
+        if (!el) return;
+        html5QrCode = new Html5Qrcode("accueil-reader");
+        html5QrCode.start(
+          { facingMode: "environment" }, // Force la caméra arrière
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          (decodedText) => {
+            if (decodedText.startsWith('DOS-')) {
+              const pastVisits = patients.filter(p => p.dossierId === decodedText || p.id === decodedText);
+              if (pastVisits.length > 0) {
+                setAncienDossierId(decodedText);
+                setNouveauNom(pastVisits[0].nom); 
+              } else {
+                alert("Dossier inconnu dans le système.");
               }
-              if (html5QrcodeScanner) html5QrcodeScanner.clear();
-              setIsAccueilCameraActive(false); 
-            },
-            (error) => {}
-          );
-        }
-      }, 150);
+            }
+            html5QrCode?.stop().then(() => setIsAccueilCameraActive(false));
+          },
+          (errorMessage) => {}
+        ).catch(err => {
+          console.error("Camera Error:", err);
+          alert("Impossible d'activer la caméra. Vérifiez les permissions.");
+          setIsAccueilCameraActive(false);
+        });
+      }, 200);
     }
-    return () => { if (html5QrcodeScanner) html5QrcodeScanner.clear().catch(e => console.error(e)); };
+    return () => { if (html5QrCode && html5QrCode.isScanning) html5QrCode.stop().catch(e => console.error(e)); };
   }, [isAccueilCameraActive, patients]);
 
-  // Scanner Pharmacie (Caméra)
+  // Scanner 2 : Pharmacie
   useEffect(() => {
-    let html5QrcodeScanner: Html5QrcodeScanner | null = null;
+    let html5QrCode: Html5Qrcode | null = null;
     if (isCameraActive) {
       setTimeout(() => {
-        const element = document.getElementById("reader");
-        if (element) {
-          html5QrcodeScanner = new Html5QrcodeScanner(
-            "reader", { fps: 10, qrbox: { width: 250, height: 250 }, videoConstraints: { facingMode: "environment" } }, false
-          );
-          html5QrcodeScanner.render(
-            (decodedText) => {
-              handleTraitementScanRef.current(decodedText);
-              if (html5QrcodeScanner) html5QrcodeScanner.clear();
-              setIsCameraActive(false); 
-            },
-            (error) => { }
-          );
-        }
-      }, 150);
+        const el = document.getElementById("reader");
+        if (!el) return;
+        html5QrCode = new Html5Qrcode("reader");
+        html5QrCode.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          (decodedText) => {
+            handleTraitementScanRef.current(decodedText);
+            html5QrCode?.stop().then(() => setIsCameraActive(false));
+          },
+          (errorMessage) => {}
+        ).catch(err => {
+          console.error("Camera Error:", err);
+          setMessageErreur("Impossible d'activer la caméra. Vérifiez les permissions.");
+          setIsCameraActive(false);
+        });
+      }, 200);
     }
-    return () => { if (html5QrcodeScanner) html5QrcodeScanner.clear().catch(e => console.error(e)); };
+    return () => { if (html5QrCode && html5QrCode.isScanning) html5QrCode.stop().catch(e => console.error(e)); };
   }, [isCameraActive]);
 
-  // Scanner Admin (Ajout produit)
+  // Scanner 3 : Admin
   const handleAdminScanRef = useRef((code: string) => setNewProduct(prev => ({...prev, codeBarre: code})));
   useEffect(() => { handleAdminScanRef.current = (code) => setNewProduct(prev => ({...prev, codeBarre: code})); }, []);
 
   useEffect(() => {
-    let html5QrcodeScanner: Html5QrcodeScanner | null = null;
+    let html5QrCode: Html5Qrcode | null = null;
     if (isAdminCameraActive) {
       setTimeout(() => {
-        const element = document.getElementById("admin-reader");
-        if (element) {
-          html5QrcodeScanner = new Html5QrcodeScanner(
-            "admin-reader", { fps: 10, qrbox: { width: 250, height: 100 }, videoConstraints: { facingMode: "environment" } }, false
-          );
-          html5QrcodeScanner.render(
-            (decodedText) => {
-              handleAdminScanRef.current(decodedText);
-              if (html5QrcodeScanner) html5QrcodeScanner.clear();
-              setIsAdminCameraActive(false);
-            },
-            (error) => { }
-          );
-        }
-      }, 150);
+        const el = document.getElementById("admin-reader");
+        if (!el) return;
+        html5QrCode = new Html5Qrcode("admin-reader");
+        html5QrCode.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 250, height: 100 } },
+          (decodedText) => {
+            handleAdminScanRef.current(decodedText);
+            html5QrCode?.stop().then(() => setIsAdminCameraActive(false));
+          },
+          (errorMessage) => {}
+        ).catch(err => {
+          console.error("Camera Error:", err);
+          alert("Impossible d'activer la caméra.");
+          setIsAdminCameraActive(false);
+        });
+      }, 200);
     }
-    return () => { if (html5QrcodeScanner) html5QrcodeScanner.clear().catch(e => console.error(e)); };
+    return () => { if (html5QrCode && html5QrCode.isScanning) html5QrCode.stop().catch(e => console.error(e)); };
   }, [isAdminCameraActive]);
 
 
@@ -331,29 +324,35 @@ const ClinicDashboard: React.FC = () => {
 
   const handleLogout = () => { setLoggedInUser(null); setLoginUsername(''); setLoginPwd(''); setTicketGenere(null); setRecuApercu(null); setAncienDossierId(null); };
 
-  // --- LOGIQUE MÉTIER ---
+
+  // --- LOGIQUE MÉTIER ACCUEIL ---
   const genererTicket = () => {
     if (!nouveauNom.trim()) return;
-    const numeroFormatte = (patients.filter(p => p.service === nouveauService).length + 1).toString().padStart(3, '0');
     
-    // NOUVEAU: Maintien du DossierId si c'est un ancien patient
+    // Logique de réinitialisation quotidienne des tickets
+    const todayDate = new Date().toLocaleDateString();
+    const patientsAujourdhui = patients.filter(p => p.service === nouveauService && p.dateArrivee === todayDate);
+    const numeroFormatte = (patientsAujourdhui.length + 1).toString().padStart(3, '0');
+    
     const finalDossierId = ancienDossierId || `DOS-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
     
     const newPatient: Patient = {
-      id: `VIS-${Date.now()}`, // ID de la visite unique
+      id: `VIS-${Date.now()}`, 
       dossierId: finalDossierId,
       ticket: `${nouveauService}-${numeroFormatte}`, 
       nom: nouveauNom, service: nouveauService,
-      statut: 'Triage', heureArrivee: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      statut: 'Triage', 
+      heureArrivee: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      dateArrivee: todayDate
     };
     
-    setPatients([...patients, newPatient]); 
+    setPatients(prev => [...prev, newPatient]); 
     setTicketGenere(newPatient); 
     setNouveauNom('');
     setAncienDossierId(null);
     syncToFirebase('patients', newPatient.id, newPatient);
 
-    // NOUVEAU: Facturation automatique de la consultation
+    // Facturation automatique de la consultation dans la caisse
     const prixConsultation = PRIX_CONSULTATION[nouveauService];
     const consultationVente: RapportVente = {
       id: `REC-${Math.floor(Math.random() * 10000)}`,
@@ -394,6 +393,7 @@ const ClinicDashboard: React.FC = () => {
     printWindow.document.write(htmlTicket); printWindow.document.close();
   };
 
+  // --- LOGIQUE MÉTIER INFIRMERIE & MEDECIN ---
   const validerTriage = () => {
     if (!selectedPatientTriage) return;
     const patientAjourne = { ...selectedPatientTriage, statut: 'Consultation' as const, constantes: { sys: Number(tensionSys), dia: Number(tensionDia), temp: Number(temperature), poids: Number(poids) } };
@@ -428,6 +428,7 @@ const ClinicDashboard: React.FC = () => {
 
   const annulerOrdonnance = () => { setOrdonnance([]); };
 
+  // --- LOGIQUE MÉTIER CAISSE ---
   const updateQuantitePanier = (idMed: string, delta: number) => {
     setPanier(panier.map(l => {
       if (l.medicament.id === idMed) {
@@ -627,7 +628,7 @@ const ClinicDashboard: React.FC = () => {
       </header>
 
       <div className="flex flex-1 overflow-hidden relative w-full">
-        {/* SIDEBAR RESPONSIVE AVEC LOGIQUE DE ROLES */}
+        {/* SIDEBAR RESPONSIVE */}
         <aside className={`${isMobileMenuOpen ? 'flex' : 'hidden'} md:flex flex-col w-64 bg-white border-r py-6 absolute md:relative z-20 h-full transition-all`}>
           <nav className="flex flex-col gap-2 px-4">
             {isAdminOrAbove && <button onClick={() => {setActiveTab('admin'); setIsMobileMenuOpen(false);}} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'admin' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><BarChart3 size={20} /> Administration {isPresident && <Eye size={16} className="ml-auto opacity-50" title="Lecture seule"/>}</button>}
@@ -661,7 +662,7 @@ const ClinicDashboard: React.FC = () => {
 
               {adminSubTab === 'stats' && (
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 w-full">
-                  <div className="bg-white p-6 rounded-2xl border flex items-center gap-4"><div className="bg-blue-100 p-4 rounded-xl text-blue-600"><Users size={24} /></div><div><p className="text-sm font-bold text-slate-500">Patients du jour</p><p className="text-3xl font-black">{patients.length}</p></div></div>
+                  <div className="bg-white p-6 rounded-2xl border flex items-center gap-4"><div className="bg-blue-100 p-4 rounded-xl text-blue-600"><Users size={24} /></div><div><p className="text-sm font-bold text-slate-500">Patients du jour</p><p className="text-3xl font-black">{patients.filter(p => p.dateArrivee === new Date().toLocaleDateString()).length}</p></div></div>
                   <div className="bg-white p-6 rounded-2xl border flex items-center gap-4"><div className="bg-emerald-100 p-4 rounded-xl text-emerald-600"><TrendingUp size={24} /></div><div><p className="text-sm font-bold text-slate-500">Revenus (FCFA)</p><p className="text-3xl font-black">{historiqueVentes.reduce((acc, v) => acc + v.montant, 0).toLocaleString()}</p></div></div>
                   <div className="bg-white p-6 rounded-2xl border flex items-center gap-4"><div className="bg-red-100 p-4 rounded-xl text-red-600"><AlertTriangle size={24} /></div><div><p className="text-sm font-bold text-slate-500">Alertes Stocks</p><p className="text-3xl font-black text-red-600">{medicaments.filter(m => m.stock < 10).length}</p></div></div>
                 </div>
@@ -705,7 +706,7 @@ const ClinicDashboard: React.FC = () => {
                        </div>
                      )}
                      {isAdminCameraActive && (
-                       <div className="w-full max-w-sm mx-auto bg-white p-2 rounded-xl relative">
+                       <div className="w-full max-w-sm mx-auto bg-black p-2 rounded-xl relative">
                          <button onClick={() => setIsAdminCameraActive(false)} className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded z-10"><X size={16}/></button>
                          <div id="admin-reader" className="w-full min-h-[200px]"></div>
                        </div>
@@ -761,8 +762,8 @@ const ClinicDashboard: React.FC = () => {
 
               {adminSubTab === 'rapports' && (
                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col w-full overflow-hidden">
-                  <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
-                    <h3 className="font-bold flex items-center gap-2"><FileBarChart size={20}/> Historique</h3>
+                  <div className="p-4 md:p-6 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
+                    <h3 className="font-bold flex items-center gap-2"><FileBarChart size={20}/> Historique (Toutes les ventes)</h3>
                     <div className="flex gap-3 w-full sm:w-auto">
                       <button onClick={exporterExcel} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex gap-2 flex-1 justify-center"><Download size={16}/> Excel</button>
                       <button onClick={exporterPDF} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex gap-2 flex-1 justify-center"><FileText size={16}/> PDF</button>
@@ -783,13 +784,12 @@ const ClinicDashboard: React.FC = () => {
           {activeTab === 'accueil' && (
              <div className="max-w-4xl mx-auto h-full overflow-y-auto w-full">
               <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-2">Accueil & Enregistrement</h2>
-              <p className="text-slate-500 mb-6 md:mb-8 text-sm">Génération de dossiers et tickets</p>
+              <p className="text-slate-500 mb-6 text-sm">Génération de dossiers, tickets journaliers et facturation.</p>
 
-              {/* NOUVEAU: Option Ancien Dossier */}
               <div className="mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-blue-50 p-4 rounded-xl border border-blue-100 gap-4">
                 <div>
                   <h3 className="font-bold text-blue-900">Patient existant ?</h3>
-                  <p className="text-xs text-blue-700">Scannez son QR code pour retrouver son dossier.</p>
+                  <p className="text-xs text-blue-700">Scannez son ancien ticket pour récupérer son dossier.</p>
                 </div>
                 <button onClick={() => setIsAccueilCameraActive(!isAccueilCameraActive)} className={`p-3 rounded-lg text-white font-bold flex gap-2 w-full sm:w-auto justify-center ${isAccueilCameraActive ? 'bg-red-500' : 'bg-blue-600'}`}>
                   <Camera size={18} /> {isAccueilCameraActive ? 'Fermer Caméra' : 'Scanner Ancien Dossier'}
@@ -800,7 +800,7 @@ const ClinicDashboard: React.FC = () => {
                 <div className="mb-6 bg-black rounded-xl overflow-hidden border-2 border-blue-500 w-full max-w-sm mx-auto relative">
                   <button onClick={() => setIsAccueilCameraActive(false)} className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded z-10"><X size={16}/></button>
                   <div id="accueil-reader" className="w-full min-h-[200px]"></div>
-                  <p className="text-white text-xs text-center p-2">Pointez vers le QR Code du patient</p>
+                  <p className="text-white text-xs text-center p-2">Pointez vers le QR Code du patient (Caméra arrière)</p>
                 </div>
               )}
 
@@ -813,7 +813,7 @@ const ClinicDashboard: React.FC = () => {
                   <p className="text-sm font-bold text-slate-800 mb-2">Historique des passages :</p>
                   <ul className="text-xs text-slate-600 space-y-1">
                     {patients.filter(p => p.dossierId === ancienDossierId || p.id === ancienDossierId).map((p, i) => (
-                       <li key={i}>• {p.heureArrivee} - Service {p.service} ({p.statut})</li>
+                       <li key={i}>• {p.dateArrivee} à {p.heureArrivee} - Service {p.service} ({p.statut})</li>
                     ))}
                   </ul>
                 </div>
@@ -850,7 +850,7 @@ const ClinicDashboard: React.FC = () => {
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                   <div className="bg-white rounded-3xl shadow-2xl max-w-sm w-full overflow-hidden">
                     <div className="bg-slate-900 text-white text-center p-6 pb-8 rounded-b-[2rem] relative">
-                      <p className="text-slate-300 text-sm font-medium uppercase tracking-widest mb-1">Votre Numéro</p>
+                      <p className="text-slate-300 text-sm font-medium uppercase tracking-widest mb-1">Ticket du Jour</p>
                       <h1 className="text-5xl font-black">{ticketGenere.ticket}</h1>
                     </div>
                     <div className="p-8 text-center -mt-6">
@@ -858,8 +858,8 @@ const ClinicDashboard: React.FC = () => {
                         <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${ticketGenere.dossierId}`} alt="QR Code Patient" className="w-32 h-32 object-contain" />
                       </div>
                       <h2 className="text-xl font-bold text-slate-800">{ticketGenere.nom}</h2>
-                      <p className="text-slate-500 text-sm mb-2">Dossier: <span className="font-mono text-slate-800 font-bold bg-slate-100 px-2 py-0.5 rounded">{ticketGenere.dossierId}</span></p>
-                      <div className="bg-blue-50 text-blue-800 p-2 rounded-lg font-bold text-sm">Frais Consultation : {PRIX_CONSULTATION[ticketGenere.service]} FCFA</div>
+                      <p className="text-slate-500 text-sm mb-2">ID Dossier Permanent: <span className="font-mono text-slate-800 font-bold bg-slate-100 px-2 py-0.5 rounded">{ticketGenere.dossierId}</span></p>
+                      <div className="bg-blue-50 text-blue-800 p-2 rounded-lg font-bold text-sm border border-blue-200">Frais Consultation : {PRIX_CONSULTATION[ticketGenere.service]} FCFA<br/><span className="text-[10px] font-normal italic">Enregistré dans le rapport de caisse.</span></div>
                     </div>
                     <div className="p-4 bg-slate-50 flex gap-3 border-t">
                       <button onClick={() => setTicketGenere(null)} className="flex-1 bg-white border text-slate-700 py-3 rounded-xl font-bold">Fermer</button>
@@ -878,7 +878,7 @@ const ClinicDashboard: React.FC = () => {
                <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6 flex-1 min-h-0 w-full">
                  <div className="lg:col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full w-full">
                    <h3 className="font-bold mb-4 flex items-center gap-2"><Clock size={18} className="text-blue-500"/> Patients en attente</h3>
-                   {patients.filter(p => p.statut === 'Triage').map(patient => (
+                   {patients.filter(p => p.statut === 'Triage' && p.dateArrivee === new Date().toLocaleDateString()).map(patient => (
                      <div key={patient.id} onClick={() => setSelectedPatientTriage(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 ${selectedPatientTriage?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
                        <div className="flex justify-between items-center"><span className="font-bold text-slate-800">{patient.nom}</span><span className="text-xs bg-slate-200 text-slate-700 px-2 py-1 rounded-full">{patient.ticket}</span></div>
                      </div>
@@ -909,7 +909,7 @@ const ClinicDashboard: React.FC = () => {
               <div className="flex flex-col lg:grid lg:grid-cols-4 gap-6 flex-1 min-h-0 w-full">
                 <div className="lg:col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full w-full">
                   <h3 className="font-bold mb-4 flex items-center gap-2"><Users size={18} className="text-blue-500"/> Salle d'attente</h3>
-                  {patients.filter(p => p.statut === 'Consultation').map(patient => (
+                  {patients.filter(p => p.statut === 'Consultation' && p.dateArrivee === new Date().toLocaleDateString()).map(patient => (
                     <div key={patient.id} onClick={() => setSelectedPatientMed(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 ${selectedPatientMed?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
                       <span className="font-bold block text-slate-800">{patient.nom}</span><span className="text-xs text-slate-500">{patient.constantes?.sys}/{patient.constantes?.dia} mmHg</span>
                     </div>
@@ -980,7 +980,7 @@ const ClinicDashboard: React.FC = () => {
                 
                 <div className="lg:col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full w-full">
                   <h3 className="font-bold mb-4 flex items-center gap-2"><Users size={18}/> Patients envoyés</h3>
-                  {patients.filter(p => p.statut === 'Pharmacie').map(patient => (
+                  {patients.filter(p => p.statut === 'Pharmacie' && p.dateArrivee === new Date().toLocaleDateString()).map(patient => (
                     <div key={patient.id} onClick={() => setSelectedPatientPharmacie(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 transition-all ${selectedPatientPharmacie?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
                       <span className="font-bold block text-slate-800">{patient.nom}</span>
                       <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full mt-1 inline-block font-bold">Ordonnance: {patient.ordonnance?.length || 0} prod.</span>
@@ -1004,23 +1004,22 @@ const ClinicDashboard: React.FC = () => {
                   ) : (
                     <div className="mb-4 p-4 bg-blue-50 rounded-xl border border-blue-200 text-center">
                       <ShoppingCart size={24} className="mx-auto text-blue-500 mb-2"/>
-                      <p className="text-sm text-blue-800 font-bold">Vente Directe (Client Externe)</p>
+                      <p className="text-sm text-blue-800 font-bold">Vente Directe (Externe)</p>
                       <p className="text-xs text-blue-600 mt-1">Scannez un produit sans dossier.</p>
                     </div>
                   )}
 
                   <div className="mt-auto">
                     <div className="flex justify-between items-center mb-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2"><Scan size={14}/> Scanner (Dossier ou Médicament)</label>
+                      <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2"><Scan size={14}/> Scanner Actif</label>
                       <button onClick={() => setIsCameraActive(!isCameraActive)} className={`p-2 rounded-lg text-white ${isCameraActive ? 'bg-red-500' : 'bg-blue-600'}`}><Camera size={16} /></button>
                     </div>
 
-                    {/* FENÊTRE DE LA CAMÉRA */}
                     {isCameraActive && (
-                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500 w-full relative">
+                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500 relative">
                         <button onClick={() => setIsCameraActive(false)} className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded z-10"><X size={16}/></button>
                         <div id="reader" className="w-full min-h-[200px]"></div>
-                        <p className="text-white text-xs text-center p-2">Caméra active</p>
+                        <p className="text-white text-xs text-center p-2">Dossier patient ou Code barre (Arrière)</p>
                       </div>
                     )}
 
@@ -1028,7 +1027,7 @@ const ClinicDashboard: React.FC = () => {
                       <Search className="absolute left-4 top-4 text-slate-400" size={20} />
                       <input ref={inputScanRef} type="text" value={codeSaisi} onChange={(e) => setCodeSaisi(e.target.value)} placeholder="Code Barre ou QR..." className="w-full pl-12 pr-4 py-4 border rounded-xl font-mono text-sm outline-none focus:ring-2 focus:border-blue-500" />
                     </form>
-                    {messageErreur && <div className="mt-3 text-red-600 text-sm font-bold bg-red-50 p-3 rounded-lg"><AlertCircle size={16} className="inline"/> {messageErreur}</div>}
+                    {messageErreur && <div className="mt-3 text-red-600 text-sm font-bold bg-red-50 p-3 rounded-lg flex items-center gap-2"><AlertCircle size={16}/> {messageErreur}</div>}
                   </div>
                 </div>
 
@@ -1042,10 +1041,10 @@ const ClinicDashboard: React.FC = () => {
                             <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-2 sm:pt-0">
                               <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
                                 <button onClick={() => updateQuantitePanier(ligne.medicament.id, -1)} className="bg-white px-2 py-1 rounded shadow-sm text-slate-700 font-bold hover:bg-slate-200">-</button>
-                                <span className="w-6 text-center font-bold">{ligne.quantite}</span>
+                                <span className="w-6 text-center font-bold text-slate-800">{ligne.quantite}</span>
                                 <button onClick={() => updateQuantitePanier(ligne.medicament.id, 1)} className="bg-white px-2 py-1 rounded shadow-sm text-slate-700 font-bold hover:bg-slate-200">+</button>
                               </div>
-                              <div className="text-right w-24"><p className="text-xs text-slate-400">Prix</p><p className="font-bold text-blue-600">{(ligne.medicament.prix * ligne.quantite).toLocaleString()} F</p></div>
+                              <div className="text-right w-24"><p className="font-bold text-blue-600">{(ligne.medicament.prix * ligne.quantite).toLocaleString()} F</p></div>
                               <button onClick={() => setPanier(panier.filter(l => l.medicament.id !== ligne.medicament.id))} className="text-red-400 hover:bg-red-50 p-2 rounded-lg"><Trash2 size={20}/></button>
                             </div>
                           </div>
