@@ -32,12 +32,20 @@ try {
   auth = getAuth(app);
   db = getFirestore(app);
 } catch (error) {
-  console.warn("Firebase non initialisé. Fonctionnement en mode local (hors ligne).", error);
+  console.warn("Firebase non initialisé. Fonctionnement en mode local.", error);
 }
 
 // --- TYPES DE DONNÉES ---
 type Role = 'Responsable' | 'Medecin' | 'Infirmier' | 'Caissiere' | 'Accueil' | 'Superviseur' | 'President';
 type ServiceType = 'PED' | 'GEN' | 'MAT' | 'CHIR';
+
+// NOUVEAU : Tarifs des consultations
+const PRIX_CONSULTATION: Record<ServiceType, number> = {
+  GEN: 5000,
+  PED: 4000,
+  MAT: 6000,
+  CHIR: 10000
+};
 
 interface User { id: string; username: string; mdp: string; role: Role; nomComplet: string; }
 interface ConstantesVitales { sys: number; dia: number; temp: number; poids: number; }
@@ -47,7 +55,9 @@ interface LigneOrdonnance { medicament: Medicament; quantite: number; }
 interface RapportVente { id: string; patientNom: string; montant: number; heure: string; date: string; detailsPanier: LignePanier[]; }
 
 interface Patient {
-  id: string; ticket: string; nom: string; service: ServiceType;
+  id: string; // ID unique de la visite
+  dossierId?: string; // ID unique et permanent du dossier patient
+  ticket: string; nom: string; service: ServiceType;
   statut: 'Accueil' | 'Triage' | 'Consultation' | 'Pharmacie' | 'Terminé';
   heureArrivee: string; constantes?: ConstantesVitales; ordonnance?: LigneOrdonnance[];
 }
@@ -75,7 +85,7 @@ const ClinicDashboard: React.FC = () => {
   
   // --- BASE DE DONNÉES HYBRIDE (Local + Firebase) ---
   const [patients, setPatients] = useState<Patient[]>([
-    { id: 'DOS-0012', ticket: 'GEN-001', nom: 'Kouassi Aya', service: 'GEN', statut: 'Triage', heureArrivee: '08:15' },
+    { id: 'VIS-001', dossierId: 'DOS-0012', ticket: 'GEN-001', nom: 'Kouassi Aya', service: 'GEN', statut: 'Triage', heureArrivee: '08:15' },
   ]);
   
   const [medicaments, setMedicaments] = useState<Medicament[]>([
@@ -85,15 +95,18 @@ const ClinicDashboard: React.FC = () => {
 
   const [historiqueVentes, setHistoriqueVentes] = useState<RapportVente[]>([]);
 
-  // --- ÉTATS RECHERCHES ---
+  // --- ÉTATS RECHERCHES & ACCUEIL ---
   const [searchMedecin, setSearchMedecin] = useState('');
   const [searchAdminStock, setSearchAdminStock] = useState('');
-
-  // --- ÉTATS SPÉCIFIQUES ---
   const [nouveauNom, setNouveauNom] = useState('');
   const [nouveauService, setNouveauService] = useState<ServiceType>('GEN');
   const [ticketGenere, setTicketGenere] = useState<Patient | null>(null);
+  
+  // NOUVEAU: Gestion des anciens dossiers à l'accueil
+  const [ancienDossierId, setAncienDossierId] = useState<string | null>(null);
+  const [isAccueilCameraActive, setIsAccueilCameraActive] = useState(false);
 
+  // --- ÉTATS SPÉCIFIQUES ---
   const [selectedPatientTriage, setSelectedPatientTriage] = useState<Patient | null>(null);
   const [tensionSys, setTensionSys] = useState<number | ''>('');
   const [tensionDia, setTensionDia] = useState<number | ''>('');
@@ -165,18 +178,19 @@ const ClinicDashboard: React.FC = () => {
 
 
   // ==========================================================================
-  // CORRECTION DÉFINITIVE DU SCANNER (STALE CLOSURE FIX)
+  // GESTION STABILISÉE DES CAMÉRAS (SCANNERS)
   // ==========================================================================
   
-  // Fonction de traitement du scan (mémorisée pour éviter les bugs de fermeture)
   const handleTraitementScan = useCallback((code: string) => {
     setMessageErreur('');
     if (code.startsWith('DOS-')) {
-      const patientTrouve = patients.find(p => p.id === code);
+      // On cherche par dossierId ou par id(pour rétrocompatibilité)
+      const patientTrouve = patients.find(p => (p.dossierId === code || p.id === code) && p.statut === 'Pharmacie');
       if (patientTrouve) {
-        if (patientTrouve.statut === 'Pharmacie') setSelectedPatientPharmacie(patientTrouve);
-        else setMessageErreur(`Le patient ${patientTrouve.nom} n'est pas en pharmacie.`);
-      } else setMessageErreur('Dossier patient introuvable.');
+        setSelectedPatientPharmacie(patientTrouve);
+      } else {
+        setMessageErreur('Dossier patient introuvable ou non envoyé en pharmacie.');
+      }
     } else {
       const med = medicaments.find(m => m.codeBarre === code);
       if (!med) return setMessageErreur('Médicament introuvable.');
@@ -193,7 +207,6 @@ const ClinicDashboard: React.FC = () => {
     setCodeSaisi(''); 
   }, [patients, medicaments, panier]);
 
-  // Référence pour garantir que la caméra utilise toujours la dernière version de la fonction
   const handleTraitementScanRef = useRef(handleTraitementScan);
   useEffect(() => { handleTraitementScanRef.current = handleTraitementScan; }, [handleTraitementScan]);
 
@@ -204,6 +217,38 @@ const ClinicDashboard: React.FC = () => {
     }
   }, [activeTab, recuApercu, isCameraActive]);
 
+  // NOUVEAU: Scanner Accueil (Recherche de dossier)
+  useEffect(() => {
+    let html5QrcodeScanner: Html5QrcodeScanner | null = null;
+    if (isAccueilCameraActive) {
+      setTimeout(() => {
+        const element = document.getElementById("accueil-reader");
+        if (element) {
+          html5QrcodeScanner = new Html5QrcodeScanner(
+            "accueil-reader", { fps: 10, qrbox: { width: 250, height: 250 }, videoConstraints: { facingMode: "environment" } }, false
+          );
+          html5QrcodeScanner.render(
+            (decodedText) => {
+              if (decodedText.startsWith('DOS-')) {
+                const pastVisits = patients.filter(p => p.dossierId === decodedText || p.id === decodedText);
+                if (pastVisits.length > 0) {
+                  setAncienDossierId(decodedText);
+                  setNouveauNom(pastVisits[0].nom); // On récupère le nom
+                } else {
+                  alert("Dossier inconnu dans le système.");
+                }
+              }
+              if (html5QrcodeScanner) html5QrcodeScanner.clear();
+              setIsAccueilCameraActive(false); 
+            },
+            (error) => {}
+          );
+        }
+      }, 150);
+    }
+    return () => { if (html5QrcodeScanner) html5QrcodeScanner.clear().catch(e => console.error(e)); };
+  }, [isAccueilCameraActive, patients]);
+
   // Scanner Pharmacie (Caméra)
   useEffect(() => {
     let html5QrcodeScanner: Html5QrcodeScanner | null = null;
@@ -212,9 +257,7 @@ const ClinicDashboard: React.FC = () => {
         const element = document.getElementById("reader");
         if (element) {
           html5QrcodeScanner = new Html5QrcodeScanner(
-            "reader", 
-            { fps: 10, qrbox: { width: 250, height: 250 }, videoConstraints: { facingMode: "environment" } }, 
-            false
+            "reader", { fps: 10, qrbox: { width: 250, height: 250 }, videoConstraints: { facingMode: "environment" } }, false
           );
           html5QrcodeScanner.render(
             (decodedText) => {
@@ -222,7 +265,7 @@ const ClinicDashboard: React.FC = () => {
               if (html5QrcodeScanner) html5QrcodeScanner.clear();
               setIsCameraActive(false); 
             },
-            (error) => { /* Ignorer silencieusement */ }
+            (error) => { }
           );
         }
       }, 150);
@@ -241,9 +284,7 @@ const ClinicDashboard: React.FC = () => {
         const element = document.getElementById("admin-reader");
         if (element) {
           html5QrcodeScanner = new Html5QrcodeScanner(
-            "admin-reader", 
-            { fps: 10, qrbox: { width: 250, height: 100 }, videoConstraints: { facingMode: "environment" } }, 
-            false
+            "admin-reader", { fps: 10, qrbox: { width: 250, height: 100 }, videoConstraints: { facingMode: "environment" } }, false
           );
           html5QrcodeScanner.render(
             (decodedText) => {
@@ -288,19 +329,42 @@ const ClinicDashboard: React.FC = () => {
     }
   };
 
-  const handleLogout = () => { setLoggedInUser(null); setLoginUsername(''); setLoginPwd(''); setTicketGenere(null); setRecuApercu(null); };
+  const handleLogout = () => { setLoggedInUser(null); setLoginUsername(''); setLoginPwd(''); setTicketGenere(null); setRecuApercu(null); setAncienDossierId(null); };
 
   // --- LOGIQUE MÉTIER ---
   const genererTicket = () => {
     if (!nouveauNom.trim()) return;
     const numeroFormatte = (patients.filter(p => p.service === nouveauService).length + 1).toString().padStart(3, '0');
+    
+    // NOUVEAU: Maintien du DossierId si c'est un ancien patient
+    const finalDossierId = ancienDossierId || `DOS-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
+    
     const newPatient: Patient = {
-      id: `DOS-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
-      ticket: `${nouveauService}-${numeroFormatte}`, nom: nouveauNom, service: nouveauService,
+      id: `VIS-${Date.now()}`, // ID de la visite unique
+      dossierId: finalDossierId,
+      ticket: `${nouveauService}-${numeroFormatte}`, 
+      nom: nouveauNom, service: nouveauService,
       statut: 'Triage', heureArrivee: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
-    setPatients([...patients, newPatient]); setTicketGenere(newPatient); setNouveauNom('');
+    
+    setPatients([...patients, newPatient]); 
+    setTicketGenere(newPatient); 
+    setNouveauNom('');
+    setAncienDossierId(null);
     syncToFirebase('patients', newPatient.id, newPatient);
+
+    // NOUVEAU: Facturation automatique de la consultation
+    const prixConsultation = PRIX_CONSULTATION[nouveauService];
+    const consultationVente: RapportVente = {
+      id: `REC-${Math.floor(Math.random() * 10000)}`,
+      patientNom: newPatient.nom,
+      montant: prixConsultation,
+      heure: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      date: new Date().toLocaleDateString(),
+      detailsPanier: [{ medicament: { id: 'CONS', nom: `Consultation ${nouveauService}`, prix: prixConsultation, stock: 999, codeBarre: '' }, quantite: 1 }]
+    };
+    setHistoriqueVentes(prev => [consultationVente, ...prev]);
+    syncToFirebase('ventes', consultationVente.id, consultationVente);
   };
 
   const imprimerTicketAccueil = () => {
@@ -314,13 +378,15 @@ const ClinicDashboard: React.FC = () => {
         .bold { font-weight: bold; }
         .ticket-num { font-size: 28px; margin: 10px 0; border: 2px solid #000; padding: 5px; }
         .qr-img { width: 120px; height: 120px; margin: 10px auto; }
+        .price { font-size: 14px; margin-top: 10px; border-top: 1px dashed #000; padding-top: 5px;}
       </style></head><body>
         <div class="bold" style="font-size:16px;">ONG SANTE PLUS</div>
         <div style="font-size:12px; margin-bottom: 10px;">${new Date().toLocaleDateString()} - ${ticketGenere.heureArrivee}</div>
         <div>Ticket d'attente</div>
         <div class="ticket-num bold">${ticketGenere.ticket}</div>
         <div>${ticketGenere.nom}</div>
-        <img class="qr-img" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${ticketGenere.id}" />
+        <div class="price bold">Frais de dossier : ${PRIX_CONSULTATION[ticketGenere.service]} FCFA</div>
+        <img class="qr-img" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${ticketGenere.dossierId}" />
         <div style="font-size:10px;">Conservez ce ticket pour la caisse</div>
         <script>window.onload = function() { window.print(); window.close(); }</script>
       </body></html>
@@ -520,7 +586,7 @@ const ClinicDashboard: React.FC = () => {
   // --- RENDU UI PRINCIPAL ---
   if (!loggedInUser) {
     return (
-      <div className="min-h-[100dvh] bg-slate-900 flex items-center justify-center p-4 font-sans">
+      <div className="min-h-[100dvh] bg-slate-900 flex items-center justify-center p-4 font-sans w-full overflow-hidden">
         <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
           <div className="text-center mb-8">
             <div className="bg-blue-600 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/30"><ShieldPlus size={32} className="text-white" /></div>
@@ -546,9 +612,9 @@ const ClinicDashboard: React.FC = () => {
   const isAdminOrAbove = loggedInUser.role === 'Responsable' || isPresident || isSuperviseur;
 
   return (
-    <div className="h-[100dvh] flex flex-col bg-slate-50 font-sans overflow-hidden">
+    <div className="h-[100dvh] flex flex-col bg-slate-50 font-sans overflow-x-hidden w-full">
       {/* HEADER */}
-      <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-30 shrink-0">
+      <header className="bg-slate-900 text-white p-4 flex items-center justify-between shadow-md z-30 shrink-0 w-full">
         <div className="flex items-center gap-3">
           <button className="md:hidden p-2 bg-slate-800 rounded-lg text-white" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu size={24} /></button>
           <div className="bg-blue-500 p-2 rounded-lg"><ShieldPlus size={24} className="text-white" /></div>
@@ -561,7 +627,7 @@ const ClinicDashboard: React.FC = () => {
       </header>
 
       <div className="flex flex-1 overflow-hidden relative w-full">
-        {/* SIDEBAR RESPONSIVE */}
+        {/* SIDEBAR RESPONSIVE AVEC LOGIQUE DE ROLES */}
         <aside className={`${isMobileMenuOpen ? 'flex' : 'hidden'} md:flex flex-col w-64 bg-white border-r py-6 absolute md:relative z-20 h-full transition-all`}>
           <nav className="flex flex-col gap-2 px-4">
             {isAdminOrAbove && <button onClick={() => {setActiveTab('admin'); setIsMobileMenuOpen(false);}} className={`flex items-center gap-3 p-3 rounded-xl transition-all ${activeTab === 'admin' ? 'bg-slate-900 text-white font-bold' : 'text-slate-600 hover:bg-slate-50'}`}><BarChart3 size={20} /> Administration {isPresident && <Eye size={16} className="ml-auto opacity-50" title="Lecture seule"/>}</button>}
@@ -586,7 +652,7 @@ const ClinicDashboard: React.FC = () => {
                 </div>
               </div>
               
-              <div className="flex flex-wrap gap-2 mb-6 border-b pb-2 w-full">
+              <div className="flex flex-wrap gap-2 mb-6 border-b pb-2 overflow-x-auto w-full">
                 <button onClick={() => setAdminSubTab('stats')} className={`px-4 py-2 font-bold rounded-lg ${adminSubTab === 'stats' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Tableau de bord</button>
                 <button onClick={() => setAdminSubTab('stock')} className={`px-4 py-2 font-bold rounded-lg ${adminSubTab === 'stock' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Stock Pharmacie</button>
                 <button onClick={() => setAdminSubTab('personnel')} className={`px-4 py-2 font-bold rounded-lg ${adminSubTab === 'personnel' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-200'}`}>Personnel</button>
@@ -608,7 +674,7 @@ const ClinicDashboard: React.FC = () => {
                    <div className="flex flex-col sm:flex-row w-full sm:w-auto gap-3">
                      <div className="relative flex-1 sm:w-64">
                        <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
-                       <input type="text" placeholder="Rechercher..." value={searchAdminStock} onChange={e => setSearchAdminStock(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg outline-none" />
+                       <input type="text" placeholder="Rechercher..." value={searchAdminStock} onChange={e => setSearchAdminStock(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border rounded-lg outline-none focus:border-blue-500" />
                      </div>
                      {!isPresident && <button onClick={() => setShowAddProduct(!showAddProduct)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold">{showAddProduct ? 'Fermer' : 'Nouveau Produit'}</button>}
                    </div>
@@ -695,17 +761,17 @@ const ClinicDashboard: React.FC = () => {
 
               {adminSubTab === 'rapports' && (
                 <div className="bg-white border rounded-2xl shadow-sm flex-1 flex flex-col w-full overflow-hidden">
-                  <div className="p-4 md:p-6 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
-                    <h3 className="font-bold flex items-center gap-2"><FileBarChart size={20}/> Historique (Synchronisé)</h3>
-                    <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-                      <button onClick={exporterExcel} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex gap-2 justify-center"><Download size={16}/> Excel</button>
-                      <button onClick={exporterPDF} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex gap-2 justify-center"><FileText size={16}/> PDF</button>
+                  <div className="p-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
+                    <h3 className="font-bold flex items-center gap-2"><FileBarChart size={20}/> Historique</h3>
+                    <div className="flex gap-3 w-full sm:w-auto">
+                      <button onClick={exporterExcel} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex gap-2 flex-1 justify-center"><Download size={16}/> Excel</button>
+                      <button onClick={exporterPDF} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex gap-2 flex-1 justify-center"><FileText size={16}/> PDF</button>
                     </div>
                   </div>
                   <div className="w-full overflow-x-auto p-4">
                     <table className="w-full text-left text-sm border whitespace-nowrap min-w-[600px]">
                       <thead><tr className="bg-slate-50 border-b text-slate-500 uppercase text-xs"><th className="p-3">Facture</th><th className="p-3">Date/Heure</th><th className="p-3">Patient</th><th className="p-3 text-right">Montant</th></tr></thead>
-                      <tbody>{historiqueVentes.map(v => (<tr key={v.id} className="border-b"><td className="p-3 font-mono text-slate-500">{v.id}</td><td className="p-3">{v.date} {v.heure}</td><td className="p-3 font-bold">{v.patientNom}</td><td className="p-3 text-right font-bold text-emerald-600">{v.montant.toLocaleString()} F</td></tr>))}</tbody>
+                      <tbody>{historiqueVentes.map(v => (<tr key={v.id} className="border-b"><td className="p-3 font-mono">{v.id}</td><td className="p-3">{v.date} {v.heure}</td><td className="p-3 font-bold">{v.patientNom}</td><td className="p-3 text-right font-bold text-emerald-600">{v.montant.toLocaleString()} F</td></tr>))}</tbody>
                     </table>
                   </div>
                 </div>
@@ -715,26 +781,69 @@ const ClinicDashboard: React.FC = () => {
 
           {/* === MODULE 1: ACCUEIL === */}
           {activeTab === 'accueil' && (
-             <div className="max-w-4xl mx-auto h-full w-full">
+             <div className="max-w-4xl mx-auto h-full overflow-y-auto w-full">
               <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-2">Accueil & Enregistrement</h2>
-              <p className="text-slate-500 mb-6 text-sm">Génération de dossiers et tickets</p>
+              <p className="text-slate-500 mb-6 md:mb-8 text-sm">Génération de dossiers et tickets</p>
+
+              {/* NOUVEAU: Option Ancien Dossier */}
+              <div className="mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-blue-50 p-4 rounded-xl border border-blue-100 gap-4">
+                <div>
+                  <h3 className="font-bold text-blue-900">Patient existant ?</h3>
+                  <p className="text-xs text-blue-700">Scannez son QR code pour retrouver son dossier.</p>
+                </div>
+                <button onClick={() => setIsAccueilCameraActive(!isAccueilCameraActive)} className={`p-3 rounded-lg text-white font-bold flex gap-2 w-full sm:w-auto justify-center ${isAccueilCameraActive ? 'bg-red-500' : 'bg-blue-600'}`}>
+                  <Camera size={18} /> {isAccueilCameraActive ? 'Fermer Caméra' : 'Scanner Ancien Dossier'}
+                </button>
+              </div>
+
+              {isAccueilCameraActive && (
+                <div className="mb-6 bg-black rounded-xl overflow-hidden border-2 border-blue-500 w-full max-w-sm mx-auto relative">
+                  <button onClick={() => setIsAccueilCameraActive(false)} className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded z-10"><X size={16}/></button>
+                  <div id="accueil-reader" className="w-full min-h-[200px]"></div>
+                  <p className="text-white text-xs text-center p-2">Pointez vers le QR Code du patient</p>
+                </div>
+              )}
+
+              {ancienDossierId && (
+                <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="font-bold text-emerald-800 flex items-center gap-2"><CheckCircle2 size={18}/> Dossier reconnu</h4>
+                    <button onClick={() => {setAncienDossierId(null); setNouveauNom('');}} className="text-xs text-red-600 font-bold bg-white px-2 py-1 rounded border hover:bg-red-50">Annuler</button>
+                  </div>
+                  <p className="text-sm font-bold text-slate-800 mb-2">Historique des passages :</p>
+                  <ul className="text-xs text-slate-600 space-y-1">
+                    {patients.filter(p => p.dossierId === ancienDossierId || p.id === ancienDossierId).map((p, i) => (
+                       <li key={i}>• {p.heureArrivee} - Service {p.service} ({p.statut})</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <div className="bg-white p-4 md:p-6 rounded-2xl border shadow-sm w-full">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                   <div>
                     <label className="block text-sm font-bold text-slate-700 mb-2">Nom complet du patient</label>
-                    <input type="text" value={nouveauNom} onChange={(e) => setNouveauNom(e.target.value)} placeholder="Ex: Koffi Emmanuel" className="w-full p-4 border rounded-xl outline-none focus:border-blue-400" />
+                    <input type="text" value={nouveauNom} onChange={(e) => setNouveauNom(e.target.value)} disabled={!!ancienDossierId} placeholder="Ex: Koffi Emmanuel" className="w-full p-4 border rounded-xl outline-none focus:border-blue-400 disabled:bg-slate-100" />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-slate-700 mb-2">Service demandé</label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button onClick={() => setNouveauService('GEN')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center font-bold ${nouveauService === 'GEN' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'text-slate-600'}`}><GenMed size={18}/> Général</button>
-                      <button onClick={() => setNouveauService('PED')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center font-bold ${nouveauService === 'PED' ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'text-slate-600'}`}><Baby size={18}/> Pédiatrie</button>
-                      <button onClick={() => setNouveauService('MAT')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center font-bold ${nouveauService === 'MAT' ? 'bg-rose-50 border-rose-500 text-rose-700' : 'text-slate-600'}`}><Heart size={18}/> Maternité</button>
-                      <button onClick={() => setNouveauService('CHIR')} className={`p-3 rounded-xl border flex items-center gap-2 justify-center font-bold ${nouveauService === 'CHIR' ? 'bg-purple-50 border-purple-500 text-purple-700' : 'text-slate-600'}`}><Activity size={18}/> Chirurgie</button>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">Service & Tarification</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <button onClick={() => setNouveauService('GEN')} className={`p-3 rounded-xl border flex flex-col items-center justify-center font-bold ${nouveauService === 'GEN' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+                        <div className="flex gap-2 items-center"><GenMed size={18}/> Général</div><span className="text-xs">{PRIX_CONSULTATION.GEN} F</span>
+                      </button>
+                      <button onClick={() => setNouveauService('PED')} className={`p-3 rounded-xl border flex flex-col items-center justify-center font-bold ${nouveauService === 'PED' ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+                        <div className="flex gap-2 items-center"><Baby size={18}/> Pédiatrie</div><span className="text-xs">{PRIX_CONSULTATION.PED} F</span>
+                      </button>
+                      <button onClick={() => setNouveauService('MAT')} className={`p-3 rounded-xl border flex flex-col items-center justify-center font-bold ${nouveauService === 'MAT' ? 'bg-rose-50 border-rose-500 text-rose-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+                        <div className="flex gap-2 items-center"><Heart size={18}/> Maternité</div><span className="text-xs">{PRIX_CONSULTATION.MAT} F</span>
+                      </button>
+                      <button onClick={() => setNouveauService('CHIR')} className={`p-3 rounded-xl border flex flex-col items-center justify-center font-bold ${nouveauService === 'CHIR' ? 'bg-purple-50 border-purple-500 text-purple-700' : 'text-slate-600 hover:bg-slate-50'}`}>
+                        <div className="flex gap-2 items-center"><Activity size={18}/> Chirurgie</div><span className="text-xs">{PRIX_CONSULTATION.CHIR} F</span>
+                      </button>
                     </div>
                   </div>
                 </div>
-                <button onClick={genererTicket} disabled={!nouveauNom.trim()} className="w-full bg-slate-900 text-white p-4 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50"><QrCode size={20} /> Générer Dossier & Ticket</button>
+                <button onClick={genererTicket} disabled={!nouveauNom.trim()} className="w-full bg-slate-900 text-white p-4 rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50"><QrCode size={20} /> Valider & Générer Ticket ({PRIX_CONSULTATION[nouveauService]} F)</button>
               </div>
 
               {ticketGenere && (
@@ -745,11 +854,12 @@ const ClinicDashboard: React.FC = () => {
                       <h1 className="text-5xl font-black">{ticketGenere.ticket}</h1>
                     </div>
                     <div className="p-8 text-center -mt-6">
-                      <div className="bg-white rounded-2xl shadow-lg p-4 mb-6 mx-auto inline-block border">
-                        <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${ticketGenere.id}`} alt="QR Code Patient" className="w-32 h-32 object-contain" />
+                      <div className="bg-white rounded-2xl shadow-lg p-4 mb-4 mx-auto inline-block border">
+                        <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${ticketGenere.dossierId}`} alt="QR Code Patient" className="w-32 h-32 object-contain" />
                       </div>
                       <h2 className="text-xl font-bold text-slate-800">{ticketGenere.nom}</h2>
-                      <p className="text-slate-500 mt-1">Dossier: <span className="font-mono text-slate-800 font-bold bg-slate-100 px-2 py-0.5 rounded">{ticketGenere.id}</span></p>
+                      <p className="text-slate-500 text-sm mb-2">Dossier: <span className="font-mono text-slate-800 font-bold bg-slate-100 px-2 py-0.5 rounded">{ticketGenere.dossierId}</span></p>
+                      <div className="bg-blue-50 text-blue-800 p-2 rounded-lg font-bold text-sm">Frais Consultation : {PRIX_CONSULTATION[ticketGenere.service]} FCFA</div>
                     </div>
                     <div className="p-4 bg-slate-50 flex gap-3 border-t">
                       <button onClick={() => setTicketGenere(null)} className="flex-1 bg-white border text-slate-700 py-3 rounded-xl font-bold">Fermer</button>
@@ -809,13 +919,13 @@ const ClinicDashboard: React.FC = () => {
                 <div className="lg:col-span-3 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden w-full">
                   {selectedPatientMed ? (
                     <div className="flex-1 flex flex-col overflow-y-auto">
-                      <div className="bg-slate-900 text-white p-4"><h2 className="text-xl font-bold">{selectedPatientMed.nom}</h2></div>
-                      <div className="p-4 flex flex-col lg:grid lg:grid-cols-2 gap-6 flex-1 w-full">
+                      <div className="bg-slate-900 text-white p-4 md:p-6"><h2 className="text-xl md:text-2xl font-bold">{selectedPatientMed.nom}</h2></div>
+                      <div className="p-4 md:p-6 flex flex-col lg:grid lg:grid-cols-2 gap-6 flex-1 w-full">
                         <div className="flex flex-col gap-4">
-                          <div><label className="text-sm font-bold text-slate-700 mb-2 block">Notes Cliniques</label><textarea className="w-full p-4 border rounded-xl h-32 outline-none focus:border-blue-400" value={notesCliniques} onChange={e => setNotesCliniques(e.target.value)} /></div>
+                          <div><label className="text-sm font-bold text-slate-700 mb-2 block">Notes Cliniques</label><textarea className="w-full p-4 border rounded-xl h-32 md:h-40 outline-none focus:border-blue-400" value={notesCliniques} onChange={e => setNotesCliniques(e.target.value)} /></div>
                           <div><label className="text-sm font-bold text-slate-700 mb-2 block">Diagnostic Retenu</label><input type="text" className="w-full p-4 border rounded-xl font-bold outline-none focus:border-blue-400" value={diagnostic} onChange={e => setDiagnostic(e.target.value)} /></div>
                         </div>
-                        <div className="bg-blue-50 rounded-2xl p-4 flex flex-col border border-blue-100 min-h-[300px] w-full">
+                        <div className="bg-blue-50 rounded-2xl p-4 md:p-5 flex flex-col border border-blue-100 min-h-[300px] w-full">
                           <div className="flex justify-between items-center mb-3">
                             <h4 className="font-bold text-blue-900 flex items-center gap-2"><Pill size={18}/> Ordonnance</h4>
                           </div>
@@ -871,7 +981,7 @@ const ClinicDashboard: React.FC = () => {
                 <div className="lg:col-span-1 bg-white border rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full w-full">
                   <h3 className="font-bold mb-4 flex items-center gap-2"><Users size={18}/> Patients envoyés</h3>
                   {patients.filter(p => p.statut === 'Pharmacie').map(patient => (
-                    <div key={patient.id} onClick={() => setSelectedPatientPharmacie(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 ${selectedPatientPharmacie?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
+                    <div key={patient.id} onClick={() => setSelectedPatientPharmacie(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 transition-all ${selectedPatientPharmacie?.id === patient.id ? 'border-blue-500 bg-blue-50' : 'hover:bg-slate-50'}`}>
                       <span className="font-bold block text-slate-800">{patient.nom}</span>
                       <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full mt-1 inline-block font-bold">Ordonnance: {patient.ordonnance?.length || 0} prod.</span>
                     </div>
@@ -881,25 +991,36 @@ const ClinicDashboard: React.FC = () => {
                 <div className="lg:col-span-1 bg-white border rounded-2xl p-4 shadow-sm flex flex-col overflow-y-auto w-full">
                   {selectedPatientPharmacie ? (
                     <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
-                      <h4 className="text-xs font-black text-yellow-800 uppercase mb-2"><FileText size={16} className="inline"/> À délivrer :</h4>
+                      <div className="flex justify-between items-center mb-2">
+                        <h4 className="text-xs font-black text-yellow-800 uppercase"><FileText size={16} className="inline"/> À délivrer</h4>
+                        <button onClick={() => setSelectedPatientPharmacie(null)} className="text-xs font-bold text-red-600 bg-white px-2 py-1 rounded border border-red-200">Annuler</button>
+                      </div>
                       <ul className="text-sm font-bold text-slate-800">
                         {selectedPatientPharmacie.ordonnance?.map(o => (
                           <li key={o.medicament.id} className="flex gap-2 items-center"><div className="w-1.5 h-1.5 rounded-full bg-yellow-500"></div><span className="text-blue-600">{o.quantite}x</span> {o.medicament.nom}</li>
                         ))}
                       </ul>
                     </div>
-                  ) : <div className="mb-4 p-4 bg-slate-50 rounded-xl text-sm text-slate-400 text-center border border-dashed">Sélectionnez le patient ou scannez son QR.</div>}
+                  ) : (
+                    <div className="mb-4 p-4 bg-blue-50 rounded-xl border border-blue-200 text-center">
+                      <ShoppingCart size={24} className="mx-auto text-blue-500 mb-2"/>
+                      <p className="text-sm text-blue-800 font-bold">Vente Directe (Client Externe)</p>
+                      <p className="text-xs text-blue-600 mt-1">Scannez un produit sans dossier.</p>
+                    </div>
+                  )}
 
                   <div className="mt-auto">
                     <div className="flex justify-between items-center mb-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2"><Scan size={14}/> Scanner Actif</label>
+                      <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2"><Scan size={14}/> Scanner (Dossier ou Médicament)</label>
                       <button onClick={() => setIsCameraActive(!isCameraActive)} className={`p-2 rounded-lg text-white ${isCameraActive ? 'bg-red-500' : 'bg-blue-600'}`}><Camera size={16} /></button>
                     </div>
 
+                    {/* FENÊTRE DE LA CAMÉRA */}
                     {isCameraActive && (
-                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500 relative">
+                      <div className="mb-4 bg-black rounded-xl overflow-hidden border-2 border-blue-500 w-full relative">
                         <button onClick={() => setIsCameraActive(false)} className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded z-10"><X size={16}/></button>
                         <div id="reader" className="w-full min-h-[200px]"></div>
+                        <p className="text-white text-xs text-center p-2">Caméra active</p>
                       </div>
                     )}
 
@@ -907,11 +1028,11 @@ const ClinicDashboard: React.FC = () => {
                       <Search className="absolute left-4 top-4 text-slate-400" size={20} />
                       <input ref={inputScanRef} type="text" value={codeSaisi} onChange={(e) => setCodeSaisi(e.target.value)} placeholder="Code Barre ou QR..." className="w-full pl-12 pr-4 py-4 border rounded-xl font-mono text-sm outline-none focus:ring-2 focus:border-blue-500" />
                     </form>
-                    {messageErreur && <div className="mt-3 text-red-600 text-sm font-bold bg-red-50 p-3 rounded-lg flex items-center gap-2"><AlertCircle size={16}/> {messageErreur}</div>}
+                    {messageErreur && <div className="mt-3 text-red-600 text-sm font-bold bg-red-50 p-3 rounded-lg"><AlertCircle size={16} className="inline"/> {messageErreur}</div>}
                   </div>
                 </div>
 
-                <div className="lg:col-span-2 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden relative w-full">
+                <div className="lg:col-span-2 bg-white border rounded-2xl flex flex-col shadow-sm overflow-hidden relative">
                   <div className="flex-1 p-4 overflow-y-auto bg-slate-50/50">
                     {panier.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-slate-300 py-12"><Scan size={64} className="mb-4 opacity-20" /><p>Scannez pour ajouter</p></div> : (
                       <div className="flex flex-col gap-3">
@@ -921,7 +1042,7 @@ const ClinicDashboard: React.FC = () => {
                             <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end border-t sm:border-t-0 pt-2 sm:pt-0">
                               <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg">
                                 <button onClick={() => updateQuantitePanier(ligne.medicament.id, -1)} className="bg-white px-2 py-1 rounded shadow-sm text-slate-700 font-bold hover:bg-slate-200">-</button>
-                                <span className="w-6 text-center font-bold text-slate-800">{ligne.quantite}</span>
+                                <span className="w-6 text-center font-bold">{ligne.quantite}</span>
                                 <button onClick={() => updateQuantitePanier(ligne.medicament.id, 1)} className="bg-white px-2 py-1 rounded shadow-sm text-slate-700 font-bold hover:bg-slate-200">+</button>
                               </div>
                               <div className="text-right w-24"><p className="text-xs text-slate-400">Prix</p><p className="font-bold text-blue-600">{(ligne.medicament.prix * ligne.quantite).toLocaleString()} F</p></div>
