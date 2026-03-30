@@ -39,13 +39,13 @@ export { app, auth, db };
 
 // --- TYPES DE DONNÉES ---
 type Role = 'Responsable' | 'Medecin' | 'Infirmier' | 'Caissiere' | 'Accueil' | 'Superviseur' | 'President';
-type ServiceType = 'PED' | 'GEN' | 'MAT' | 'CHIR';
+type ServiceType = 'PED' | 'GEN' | 'MAT' | 'DER';
 
 const PRIX_CONSULTATION: Record<ServiceType, number> = {
-  GEN: 5000,
-  PED: 4000,
-  MAT: 6000,
-  CHIR: 10000
+  GEN: 1500,
+  PED: 1500,
+  MAT: 1500,
+  DER: 1500
 };
 
 interface User { id: string; username: string; mdp: string; role: Role; nomComplet: string; }
@@ -969,8 +969,8 @@ const ClinicDashboard: React.FC = () => {
                       <button onClick={() => setNouveauService('MAT')} className={`p-3 rounded-xl border flex flex-col items-center justify-center font-bold transition-all ${nouveauService === 'MAT' ? 'bg-rose-50 border-rose-500 text-rose-700 shadow-sm' : 'text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
                         <div className="flex gap-2 items-center"><Heart size={18}/> Maternité</div><span className="text-xs text-rose-500">{PRIX_CONSULTATION.MAT} F</span>
                       </button>
-                      <button onClick={() => setNouveauService('CHIR')} className={`p-3 rounded-xl border flex flex-col items-center justify-center font-bold transition-all ${nouveauService === 'CHIR' ? 'bg-blue-50 border-blue-500 text-blue-700 shadow-sm' : 'text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-                        <div className="flex gap-2 items-center"><Activity size={18}/> Chirurgie</div><span className="text-xs text-blue-500">{PRIX_CONSULTATION.CHIR} F</span>
+                      <button onClick={() => setNouveauService('DER')} className={`p-3 rounded-xl border flex flex-col items-center justify-center font-bold transition-all ${nouveauService === 'DER' ? 'bg-blue-50 border-blue-500 text-blue-700 shadow-sm' : 'text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+                        <div className="flex gap-2 items-center"><Activity size={18}/> Dermatologie/div><span className="text-xs text-blue-500">{PRIX_CONSULTATION.DER} F</span>
                       </button>
                     </div>
                   </div>
