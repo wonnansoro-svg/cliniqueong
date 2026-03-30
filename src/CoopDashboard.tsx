@@ -26,6 +26,7 @@ const firebaseConfig = {
   appId: "1:728693944134:web:e9d20c5ff05462a0cfff47"
 };
 
+// Initialisation unique et sécurisée
 let app: any, auth: any, db: any;
 try {
   app = initializeApp(firebaseConfig);
@@ -39,19 +40,19 @@ export { app, auth, db };
 
 // --- TYPES DE DONNÉES ---
 type Role = 'Responsable' | 'Medecin' | 'Infirmier' | 'Caissiere' | 'Accueil' | 'Superviseur' | 'President';
-type ServiceType = 'PED' | 'GEN' | 'MAT' | 'DER';
+type ServiceType = 'PED' | 'GEN' | 'MAT' | 'DERM'; // Remplacement de CHIR par DERM
 
 const PRIX_CONSULTATION: Record<ServiceType, number> = {
-  GEN: 1500,
-  PED: 1500,
-  MAT: 1500,
-  DER: 1500
+  GEN: 1000,
+  PED: 1000,
+  MAT: 1000,
+  DERM: 1000 // Tarif unique à 1000 FCFA
 };
 
 interface User { id: string; username: string; mdp: string; role: Role; nomComplet: string; }
 interface ConstantesVitales { sys: number; dia: number; temp: number; poids: number; }
 interface Medicament { id: string; codeBarre: string; nom: string; stock: number; prix: number; }
-interface ExamenLabo { id: string; nom: string; prix: number; } // NOUVEAU: Type pour les examens
+interface ExamenLabo { id: string; nom: string; prix: number; }
 interface LignePanier { medicament: Medicament; quantite: number; }
 interface LigneOrdonnance { medicament: Medicament; quantite: number; }
 interface RapportVente { id: string; patientNom: string; montant: number; heure: string; date: string; detailsPanier: LignePanier[]; detailsExamens?: ExamenLabo[]; }
@@ -67,7 +68,7 @@ interface Patient {
   dateArrivee: string;
   constantes?: ConstantesVitales; 
   ordonnance?: LigneOrdonnance[];
-  examens?: ExamenLabo[]; // NOUVEAU: Examens prescrits au patient
+  examens?: ExamenLabo[];
 }
 
 const ClinicDashboard: React.FC = () => {
@@ -88,14 +89,14 @@ const ClinicDashboard: React.FC = () => {
   const [loginError, setLoginError] = useState('');
 
   const [activeTab, setActiveTab] = useState<'accueil' | 'triage' | 'medecin' | 'pharmacie' | 'admin'>('accueil');
-  const [adminSubTab, setAdminSubTab] = useState<'stats' | 'stock' | 'labo' | 'personnel' | 'rapports'>('stats'); // AJOUT DU TAB LABO
-  const [docSubTab, setDocSubTab] = useState<'ordonnance' | 'labo'>('ordonnance'); // AJOUT DU TAB MEDECIN
+  const [adminSubTab, setAdminSubTab] = useState<'stats' | 'stock' | 'labo' | 'personnel' | 'rapports'>('stats');
+  const [docSubTab, setDocSubTab] = useState<'ordonnance' | 'labo'>('ordonnance');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   // --- BASE DE DONNÉES HYBRIDE ---
   const [patients, setPatients] = useState<Patient[]>([]);
   const [medicaments, setMedicaments] = useState<Medicament[]>([]);
-  const [examensLabo, setExamensLabo] = useState<ExamenLabo[]>([]); // NOUVEAU: Base de données des examens
+  const [examensLabo, setExamensLabo] = useState<ExamenLabo[]>([]);
   const [historiqueVentes, setHistoriqueVentes] = useState<RapportVente[]>([]);
 
   // --- ÉTATS ACCUEIL ---
@@ -120,11 +121,11 @@ const ClinicDashboard: React.FC = () => {
   const [notesCliniques, setNotesCliniques] = useState('');
   const [diagnostic, setDiagnostic] = useState('');
   const [ordonnance, setOrdonnance] = useState<LigneOrdonnance[]>([]);
-  const [examensPrescrits, setExamensPrescrits] = useState<ExamenLabo[]>([]); // NOUVEAU: Examens prescrits par le doc
+  const [examensPrescrits, setExamensPrescrits] = useState<ExamenLabo[]>([]);
 
   const [selectedPatientPharmacie, setSelectedPatientPharmacie] = useState<Patient | null>(null);
   const [panier, setPanier] = useState<LignePanier[]>([]);
-  const [panierExamens, setPanierExamens] = useState<ExamenLabo[]>([]); // NOUVEAU: Examens à payer en caisse
+  const [panierExamens, setPanierExamens] = useState<ExamenLabo[]>([]);
   const [codeSaisi, setCodeSaisi] = useState('');
   const [messageErreur, setMessageErreur] = useState('');
   const [recuApercu, setRecuApercu] = useState<RapportVente | null>(null); 
@@ -152,7 +153,6 @@ const ClinicDashboard: React.FC = () => {
       setMedicaments(data);
     });
 
-    // Écoute de la collection des examens de laboratoire
     const unsubExamens = onSnapshot(collection(db, 'examens'), (snapshot) => {
       const data: ExamenLabo[] = [];
       snapshot.forEach(doc => data.push(doc.data() as ExamenLabo));
@@ -197,7 +197,6 @@ const ClinicDashboard: React.FC = () => {
       const patientTrouve = patients.find(p => (p.dossierId === code || p.id === code) && p.statut === 'Pharmacie');
       if (patientTrouve) {
         setSelectedPatientPharmacie(patientTrouve);
-        // On charge automatiquement les examens prescrits dans le panier de la caisse
         setPanierExamens(patientTrouve.examens || []);
       } else {
         setMessageErreur('Dossier patient introuvable ou non envoyé en pharmacie.');
@@ -278,7 +277,7 @@ const ClinicDashboard: React.FC = () => {
           (errorMessage) => {}
         ).catch(err => {
           console.error("Camera Error:", err);
-          setMessageErreur("Impossible d'activer la caméra.");
+          setMessageErreur("Impossible d'activer la caméra. Vérifiez les permissions.");
           setIsCameraActive(false);
         });
       }, 200);
@@ -384,11 +383,12 @@ const ClinicDashboard: React.FC = () => {
     syncToFirebase('ventes', consultationVente.id, consultationVente);
   };
 
+  // IMPRESSION ACCUEIL EN POP-UP
   const imprimerTicketAccueil = () => {
     if (!ticketGenere) return;
     const printWindow = window.open('', '_blank', 'width=350,height=600');
     if (!printWindow) {
-      alert("Veuillez autoriser les fenêtres pop-up pour imprimer le ticket.");
+      alert("Veuillez autoriser les fenêtres pop-up dans votre navigateur pour imprimer.");
       return;
     }
     const htmlTicket = `
@@ -432,12 +432,10 @@ const ClinicDashboard: React.FC = () => {
   };
   const totalOrdonnance = ordonnance.reduce((sum, o) => sum + (o.medicament.prix * o.quantite), 0);
 
-  // NOUVEAU: Fonctions pour les examens (Médecin)
   const handleToggleExamen = (examen: ExamenLabo) => {
     setExamensPrescrits(prev => prev.find(e => e.id === examen.id) ? prev.filter(e => e.id !== examen.id) : [...prev, examen]);
   };
   const totalExamens = examensPrescrits.reduce((sum, e) => sum + e.prix, 0);
-
 
   const envoyerPharmacie = () => {
     if (!selectedPatientMed) return;
@@ -493,7 +491,7 @@ const ClinicDashboard: React.FC = () => {
       heure: dateActuelle.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       date: dateActuelle.toLocaleDateString(), 
       detailsPanier: [...panier],
-      detailsExamens: [...panierExamens] // On sauvegarde aussi les examens payés
+      detailsExamens: [...panierExamens] 
     };
     
     setHistoriqueVentes([nouvelleTransaction, ...historiqueVentes]);
@@ -507,7 +505,7 @@ const ClinicDashboard: React.FC = () => {
     setPanier([]); setPanierExamens([]); setRecuApercu(nouvelleTransaction);
   };
 
-  // IMPRESSION CAISSE EN POP-UP (NOUVEAU FORMAT INCLUANT LES EXAMENS)
+  // IMPRESSION CAISSE EN POP-UP 
   const lancerImpressionThermique = (transaction: RapportVente) => {
     const printWindow = window.open('', '_blank', 'width=350,height=600');
     if (!printWindow) {
@@ -515,7 +513,6 @@ const ClinicDashboard: React.FC = () => {
       return;
     }
     
-    // Construction de la section des médicaments
     const htmlMedicaments = transaction.detailsPanier.length > 0 ? `
         <div class="divider"></div>
         <div class="flex bold"><span>Pharmacie</span><span>Prix</span></div>
@@ -528,7 +525,6 @@ const ClinicDashboard: React.FC = () => {
         `).join('')}
     ` : '';
 
-    // Construction de la section des examens
     const htmlExamens = transaction.detailsExamens && transaction.detailsExamens.length > 0 ? `
         <div class="divider"></div>
         <div class="flex bold"><span>Laboratoire</span><span>Prix</span></div>
@@ -630,7 +626,6 @@ const ClinicDashboard: React.FC = () => {
     alert(`Le produit ${medFinal.nom} a été ajouté au stock avec succès !`);
   };
 
-  // NOUVEAU: GESTION DES EXAMENS LABO
   const saveExamen = () => {
     if (!newExamen.nom || !newExamen.prix) return alert("Le nom et le prix sont obligatoires.");
     const examenFinal = { ...newExamen, id: `LAB-${Date.now()}`, prix: newExamen.prix || 0 } as ExamenLabo;
@@ -649,6 +644,62 @@ const ClinicDashboard: React.FC = () => {
     }
   };
 
+  // IMPRESSION ETIQUETTES ADMIN
+  const imprimerEtiquetteUnique = (med: Partial<Medicament>) => {
+    const printWindow = window.open('', '_blank', 'width=400,height=300');
+    if (!printWindow) return;
+    const htmlLabel = `
+      <html><head><title>Étiquette Unique - ${med.nom}</title>
+      <style>
+        @page { margin: 0; size: 50mm 30mm; }
+        body { font-family: Arial, sans-serif; width: 50mm; height: 30mm; margin: 0; padding: 2mm; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; box-sizing: border-box; }
+        .title { font-size: 10px; font-weight: bold; margin-bottom: 2px; max-height: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%;}
+        .price { font-size: 9px; font-weight: bold; margin-bottom: 2px; }
+        .barcode { max-width: 100%; max-height: 14px; }
+      </style></head><body>
+        <div class="title">${med.nom || 'Produit'}</div>
+        <div class="price">${med.prix ? med.prix.toLocaleString() + ' FCFA' : ''}</div>
+        <img class="barcode" src="https://bwipjs-api.metafloor.com/?bcid=code128&text=${med.codeBarre}&scale=2&height=10&includetext=true" alt="Barcode"/>
+        <script>window.onload = function() { window.print(); window.close(); }</script>
+      </body></html>
+    `;
+    printWindow.document.write(htmlLabel); printWindow.document.close();
+  };
+
+  const imprimerEtiquettesA4 = (med: Partial<Medicament>, quantite: number) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    
+    const qty = quantite || 1;
+    const barcodesHtml = Array(qty).fill(0).map(() => `
+      <div class="label">
+        <div class="title">${med.nom || 'Produit'}</div>
+        <div class="price">${med.prix ? med.prix.toLocaleString() + ' FCFA' : ''}</div>
+        <img class="barcode" src="https://bwipjs-api.metafloor.com/?bcid=code128&text=${med.codeBarre}&scale=2&height=10&includetext=true" alt="Barcode"/>
+      </div>
+    `).join('');
+
+    const htmlA4 = `
+      <html><head><title>Planche A4 - ${med.nom}</title>
+      <style>
+        @page { size: A4; margin: 10mm; }
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #fff; }
+        .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5mm; }
+        .label { border: 1px dashed #ccc; padding: 5mm; text-align: center; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 35mm;}
+        .title { font-size: 10px; font-weight: bold; margin-bottom: 2px; max-height: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%;}
+        .price { font-size: 9px; font-weight: bold; margin-bottom: 2px; }
+        .barcode { max-width: 100%; max-height: 14px; }
+        @media print { .no-print { display: none; } }
+      </style></head><body>
+        <div class="no-print" style="margin-bottom: 15px; padding: 10px; background: #f0f8ff; border: 1px solid #cce0ff; border-radius: 5px;">
+          <strong>Astuce :</strong> Dans la fenêtre d'impression, vous pouvez choisir <em>"Enregistrer au format PDF"</em> comme imprimante de destination.
+        </div>
+        <div class="grid">${barcodesHtml}</div>
+        <script>window.onload = function() { setTimeout(function(){ window.print(); }, 500); }</script>
+      </body></html>
+    `;
+    printWindow.document.write(htmlA4); printWindow.document.close();
+  };
 
   const exporterExcel = () => {
     const enTetes = "Ref Facture;Date;Heure;Patient;Montant(FCFA)\n";
@@ -693,6 +744,9 @@ const ClinicDashboard: React.FC = () => {
             <div><label className="text-xs font-bold text-blue-700 block mb-1">Mot de passe</label><input type="password" value={loginPwd} onChange={e => setLoginPwd(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" required /></div>
             <button type="submit" className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 transition-colors"><Lock size={18} /> Connexion</button>
           </form>
+          <div className="mt-6 p-4 bg-blue-50 rounded-xl text-xs text-blue-800 border border-blue-100 text-center">
+            <strong>Tests Locaux (Mdp: 1234) :</strong> admin, medecin, infirmier, caisse, accueil, <strong>president</strong>, <strong>superviseur</strong>
+          </div>
         </div>
       </div>
     );
@@ -748,7 +802,6 @@ const ClinicDashboard: React.FC = () => {
               <div className="flex flex-wrap gap-2 mb-6 border-b border-slate-200 pb-2 overflow-x-auto w-full">
                 <button onClick={() => setAdminSubTab('stats')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'stats' ? 'bg-blue-800 text-white' : 'text-slate-500 hover:bg-blue-100 hover:text-blue-800'}`}>Tableau de bord</button>
                 <button onClick={() => setAdminSubTab('stock')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'stock' ? 'bg-blue-800 text-white' : 'text-slate-500 hover:bg-blue-100 hover:text-blue-800'}`}>Stock Pharmacie</button>
-                {/* NOUVEL ONGLET LABORATOIRE */}
                 <button onClick={() => setAdminSubTab('labo')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'labo' ? 'bg-blue-800 text-white' : 'text-slate-500 hover:bg-blue-100 hover:text-blue-800'}`}>Examen / Labo</button>
                 <button onClick={() => setAdminSubTab('personnel')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'personnel' ? 'bg-blue-800 text-white' : 'text-slate-500 hover:bg-blue-100 hover:text-blue-800'}`}>Personnel</button>
                 <button onClick={() => setAdminSubTab('rapports')} className={`px-4 py-2 font-bold rounded-lg transition-colors whitespace-nowrap ${adminSubTab === 'rapports' ? 'bg-blue-800 text-white' : 'text-slate-500 hover:bg-blue-100 hover:text-blue-800'}`}>Rapports</button>
@@ -771,7 +824,13 @@ const ClinicDashboard: React.FC = () => {
                        <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
                        <input type="text" placeholder="Rechercher..." value={searchAdminStock} onChange={e => setSearchAdminStock(e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" />
                      </div>
-                     {!isPresident && <button onClick={() => setShowAddProduct(!showAddProduct)} className="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg text-sm font-bold">{showAddProduct ? 'Fermer le formulaire' : 'Nouveau Produit'}</button>}
+                     {!isPresident && <button onClick={() => {
+                        if (!showAddProduct) {
+                          // Génération automatique du code-barres à l'ouverture du formulaire
+                          setNewProduct({ stock: 0, prix: 0, nom: '', codeBarre: Math.floor(100000000000 + Math.random() * 900000000000).toString() });
+                        }
+                        setShowAddProduct(!showAddProduct);
+                     }} className="bg-blue-600 hover:bg-blue-700 transition-colors text-white px-4 py-2 rounded-lg text-sm font-bold">{showAddProduct ? 'Fermer le formulaire' : 'Nouveau Produit'}</button>}
                    </div>
                  </div>
                  
@@ -780,16 +839,30 @@ const ClinicDashboard: React.FC = () => {
                      <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
                        <div className="md:col-span-3"><label className="text-xs font-bold text-slate-500">Nom du produit</label><input type="text" value={newProduct.nom || ''} onChange={e => setNewProduct({...newProduct, nom: e.target.value})} className="w-full p-2.5 border border-slate-200 rounded-lg outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" /></div>
                        <div className="md:col-span-4">
-                         <label className="text-xs font-bold text-slate-500">Code Barre (Saisie, Auto, Scan)</label>
+                         <label className="text-xs font-bold text-slate-500">Code Barre (Généré automatiquement)</label>
                          <div className="flex gap-2">
-                           <input type="text" value={newProduct.codeBarre || ''} onChange={e => setNewProduct({...newProduct, codeBarre: e.target.value})} className="w-full p-2.5 border border-slate-200 rounded-lg font-mono text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" />
-                           <button onClick={genererCodeBarreAdmin} className="bg-slate-200 hover:bg-slate-300 text-slate-700 p-2.5 rounded-lg transition-colors" title="Générer un code aléatoire"><Wand2 size={20}/></button>
+                           <input type="text" value={newProduct.codeBarre || ''} onChange={e => setNewProduct({...newProduct, codeBarre: e.target.value})} className="w-full p-2.5 border border-slate-200 rounded-lg font-mono text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 bg-white" />
+                           <button onClick={genererCodeBarreAdmin} className="bg-slate-200 hover:bg-slate-300 text-slate-700 p-2.5 rounded-lg transition-colors" title="Générer un autre code aléatoire"><Wand2 size={20}/></button>
                            <button onClick={() => setIsAdminCameraActive(!isAdminCameraActive)} className={`${isAdminCameraActive ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'} text-white p-2.5 rounded-lg transition-colors`} title="Scanner un code barre existant"><Camera size={20}/></button>
                          </div>
                        </div>
                        <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500">Prix (FCFA)</label><input type="number" value={newProduct.prix || ''} onChange={e => setNewProduct({...newProduct, prix: Number(e.target.value)})} className="w-full p-2.5 border border-slate-200 rounded-lg outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" /></div>
                        <div className="md:col-span-3"><label className="text-xs font-bold text-slate-500">Stock Initial</label><div className="flex gap-2"><input type="number" value={newProduct.stock || ''} onChange={e => setNewProduct({...newProduct, stock: Number(e.target.value)})} className="w-full p-2.5 border border-slate-200 rounded-lg outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" /><button onClick={saveProduct} className="bg-emerald-600 hover:bg-emerald-700 transition-colors text-white px-4 py-2.5 rounded-lg font-bold w-full sm:w-auto">Ajouter</button></div></div>
                      </div>
+                     
+                     {newProduct.codeBarre && (
+                       <div className="mt-2 p-4 bg-white rounded-xl border border-blue-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+                         <div className="flex flex-col items-center sm:items-start">
+                           <p className="text-xs font-bold text-slate-500 uppercase mb-2">Aperçu du code :</p>
+                           <img src={`https://bwipjs-api.metafloor.com/?bcid=code128&text=${newProduct.codeBarre}&scale=2&height=10&includetext=true`} alt="Aperçu" className="max-h-16" />
+                         </div>
+                         <div className="flex gap-2 w-full sm:w-auto">
+                            <button onClick={() => imprimerEtiquetteUnique(newProduct as Medicament)} className="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg font-bold flex gap-2 w-full sm:w-auto items-center justify-center hover:bg-slate-50"><Printer size={16}/> Étiquette simple</button>
+                            <button onClick={() => imprimerEtiquettesA4(newProduct as Medicament, newProduct.stock || 1)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold flex gap-2 w-full sm:w-auto items-center justify-center hover:bg-blue-700" title="Imprimer ou enregistrer en PDF"><Download size={16}/> Planche A4 (x{newProduct.stock || 1})</button>
+                         </div>
+                       </div>
+                     )}
+                     
                      {isAdminCameraActive && (
                        <div className="w-full max-w-sm mx-auto bg-black p-2 rounded-xl relative border-2 border-blue-500">
                          <button onClick={() => setIsAdminCameraActive(false)} className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded z-10"><X size={16}/></button>
@@ -813,6 +886,11 @@ const ClinicDashboard: React.FC = () => {
                                 syncToFirebase('medicaments', med.id, updatedMed).then(() => alert("Le stock a été mis à jour avec succès !"));
                              }
                            }} className="text-blue-700 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-blue-100 transition-colors">+ Stock</button>
+                           <button onClick={() => {
+                             const qtyStr = prompt(`Combien d'étiquettes voulez-vous imprimer pour ${med.nom} ?`, med.stock.toString());
+                             const qty = parseInt(qtyStr || '0', 10);
+                             if (qty > 0) imprimerEtiquettesA4(med, qty);
+                           }} className="text-slate-600 bg-white border border-slate-300 px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-slate-100 transition-colors" title="Imprimer étiquettes">A4 PDF</button>
                            <button onClick={() => deleteProduct(med.id)} className="text-red-500 bg-red-50 border border-red-100 px-2 py-1.5 rounded-lg hover:bg-red-100 transition-colors" title="Supprimer définitivement"><Trash2 size={16}/></button>
                          </td>}</tr>
                        ))}
@@ -823,7 +901,7 @@ const ClinicDashboard: React.FC = () => {
                </div>
               )}
 
-              {/* NOUVEAU ONGLET LABORATOIRE (ADMIN) */}
+              {/* ONGLET LABORATOIRE (ADMIN) */}
               {adminSubTab === 'labo' && (
                  <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex-1 flex flex-col w-full overflow-hidden">
                  <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-slate-50 gap-4">
@@ -946,6 +1024,15 @@ const ClinicDashboard: React.FC = () => {
                       </div>
                       <p className="text-sm text-emerald-800 mb-1">Nom du patient : <strong className="text-lg">{nouveauNom}</strong></p>
                       <p className="text-sm text-emerald-800 mb-4">ID Dossier permanent : <span className="font-mono font-bold bg-white px-2 py-0.5 rounded border border-emerald-100">{ancienDossierId}</span></p>
+                      
+                      <p className="text-xs font-bold text-emerald-900 uppercase mb-2">Historique des passages :</p>
+                      <div className="bg-white rounded-lg p-3 max-h-32 overflow-y-auto mb-4 border border-emerald-100 shadow-inner">
+                        <ul className="text-xs text-slate-600 space-y-2">
+                          {patients.filter(p => p.dossierId === ancienDossierId || p.id === ancienDossierId).map((p, i) => (
+                             <li key={i} className="flex justify-between border-b border-slate-100 pb-1"><span>{p.dateArrivee} à {p.heureArrivee}</span> <span className="font-medium text-emerald-700">Service {p.service} ({p.statut})</span></li>
+                          ))}
+                        </ul>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -969,8 +1056,8 @@ const ClinicDashboard: React.FC = () => {
                       <button onClick={() => setNouveauService('MAT')} className={`p-3 rounded-xl border flex flex-col items-center justify-center font-bold transition-all ${nouveauService === 'MAT' ? 'bg-rose-50 border-rose-500 text-rose-700 shadow-sm' : 'text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
                         <div className="flex gap-2 items-center"><Heart size={18}/> Maternité</div><span className="text-xs text-rose-500">{PRIX_CONSULTATION.MAT} F</span>
                       </button>
-                      <button onClick={() => setNouveauService('DER')} className={`p-3 rounded-xl border flex flex-col items-center justify-center font-bold transition-all ${nouveauService === 'DER' ? 'bg-blue-50 border-blue-500 text-blue-700 shadow-sm' : 'text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-                        <div className="flex gap-2 items-center"><Activity size={18}/> Dermatologie/div><span className="text-xs text-blue-500">{PRIX_CONSULTATION.DER} F</span>
+                      <button onClick={() => setNouveauService('DERM')} className={`p-3 rounded-xl border flex flex-col items-center justify-center font-bold transition-all ${nouveauService === 'DERM' ? 'bg-purple-50 border-purple-500 text-purple-700 shadow-sm' : 'text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+                        <div className="flex gap-2 items-center"><Activity size={18}/> Dermatologie</div><span className="text-xs text-purple-500">{PRIX_CONSULTATION.DERM} F</span>
                       </button>
                     </div>
                   </div>
@@ -991,6 +1078,7 @@ const ClinicDashboard: React.FC = () => {
                       </div>
                       <h2 className="text-xl font-black text-blue-950">{ticketGenere.nom}</h2>
                       <p className="text-slate-500 text-sm mb-2">QR de suivi (Dossier) : <span className="font-mono text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{ticketGenere.dossierId}</span></p>
+                      <div className="bg-emerald-50 text-emerald-800 p-2 rounded-lg font-bold text-sm border border-emerald-200 shadow-sm">Frais Consultation : {PRIX_CONSULTATION[ticketGenere.service]} FCFA<br/><span className="text-[10px] font-normal italic text-emerald-600">Enregistré dans le rapport de caisse.</span></div>
                     </div>
                     <div className="p-4 bg-slate-50 flex gap-3 border-t border-slate-200">
                       <button onClick={() => setTicketGenere(null)} className="flex-1 bg-white border border-slate-300 text-slate-700 py-3 rounded-xl font-bold hover:bg-slate-100 transition-colors">Fermer</button>
@@ -1008,12 +1096,13 @@ const ClinicDashboard: React.FC = () => {
                <h2 className="text-2xl md:text-3xl font-bold text-blue-950 mb-6">Infirmerie - Triage</h2>
                <div className="flex flex-col lg:grid lg:grid-cols-3 gap-6 flex-1 min-h-0 w-full">
                  <div className="lg:col-span-1 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm overflow-y-auto max-h-[30vh] lg:max-h-full w-full">
-                   <h3 className="font-bold mb-4 flex items-center gap-2 text-blue-900"><Clock size={18} className="text-blue-500"/> Patients en attente</h3>
+                   <h3 className="font-bold mb-4 flex items-center gap-2 text-blue-900"><Clock size={18} className="text-blue-500"/> Patients en attente (Aujourd'hui)</h3>
                    {patients.filter(p => p.statut === 'Triage' && p.dateArrivee === new Date().toLocaleDateString()).map(patient => (
                      <div key={patient.id} onClick={() => setSelectedPatientTriage(patient)} className={`p-4 rounded-xl cursor-pointer border mb-2 transition-all ${selectedPatientTriage?.id === patient.id ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-slate-200 hover:bg-slate-50'}`}>
                        <div className="flex justify-between items-center"><span className="font-bold text-blue-950">{patient.nom}</span><span className="text-xs bg-white border border-slate-200 text-slate-700 px-2 py-1 rounded-full font-bold shadow-sm">{patient.ticket}</span></div>
                      </div>
                    ))}
+                   {patients.filter(p => p.statut === 'Triage' && p.dateArrivee === new Date().toLocaleDateString()).length === 0 && <p className="text-sm text-slate-400 italic">Aucun patient en attente.</p>}
                  </div>
                  <div className="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-4 md:p-6 shadow-sm overflow-y-auto w-full">
                    {selectedPatientTriage ? (
@@ -1033,7 +1122,7 @@ const ClinicDashboard: React.FC = () => {
              </div>
           )}
 
-          {/* === MODULE 3: MÉDECIN (AVEC EXAMENS LABO) === */}
+          {/* === MODULE 3: MÉDECIN === */}
           {activeTab === 'medecin' && (
             <div className="h-full flex flex-col w-full">
               <h2 className="text-2xl md:text-3xl font-bold text-blue-950 mb-6">Bureau du Médecin</h2>
@@ -1045,17 +1134,17 @@ const ClinicDashboard: React.FC = () => {
                       <span className="font-bold block text-blue-950">{patient.nom}</span><span className="text-xs text-emerald-600 font-bold block mt-1"><Activity size={12} className="inline mr-1"/>{patient.constantes?.sys}/{patient.constantes?.dia} mmHg</span>
                     </div>
                   ))}
-                  {patients.filter(p => p.statut === 'Consultation').length === 0 && <p className="text-sm text-slate-400 italic">Aucun patient.</p>}
+                  {patients.filter(p => p.statut === 'Consultation' && p.dateArrivee === new Date().toLocaleDateString()).length === 0 && <p className="text-sm text-slate-400 italic">Aucun patient en salle d'attente.</p>}
                 </div>
 
                 <div className="lg:col-span-3 bg-white border border-slate-200 rounded-2xl flex flex-col shadow-sm overflow-hidden w-full">
                   {selectedPatientMed ? (
                     <div className="flex-1 flex flex-col overflow-y-auto">
-                      <div className="bg-blue-800 text-white p-4 md:p-6"><h2 className="text-xl md:text-2xl font-bold">{selectedPatientMed.nom}</h2><p className="text-blue-200 text-sm font-mono mt-1">ID: {selectedPatientMed.dossierId}</p></div>
+                      <div className="bg-blue-800 text-white p-4 md:p-6"><h2 className="text-xl md:text-2xl font-bold">{selectedPatientMed.nom}</h2><p className="text-blue-200 text-sm font-mono mt-1">ID Dossier: {selectedPatientMed.dossierId}</p></div>
                       <div className="p-4 md:p-6 flex flex-col lg:grid lg:grid-cols-2 gap-6 flex-1 w-full">
                         <div className="flex flex-col gap-4">
-                          <div><label className="text-sm font-bold text-blue-900 mb-2 block">Notes Cliniques</label><textarea className="w-full p-4 border border-slate-200 rounded-xl h-32 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" value={notesCliniques} onChange={e => setNotesCliniques(e.target.value)} /></div>
-                          <div><label className="text-sm font-bold text-blue-900 mb-2 block">Diagnostic Retenu</label><input type="text" className="w-full p-4 border border-slate-200 rounded-xl font-bold outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-blue-950" value={diagnostic} onChange={e => setDiagnostic(e.target.value)} /></div>
+                          <div><label className="text-sm font-bold text-blue-900 mb-2 block">Notes Cliniques</label><textarea className="w-full p-4 border border-slate-200 rounded-xl h-32 md:h-40 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500" value={notesCliniques} onChange={e => setNotesCliniques(e.target.value)} placeholder="Saisir les observations cliniques..." /></div>
+                          <div><label className="text-sm font-bold text-blue-900 mb-2 block">Diagnostic Retenu</label><input type="text" className="w-full p-4 border border-slate-200 rounded-xl font-bold outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-blue-950" value={diagnostic} onChange={e => setDiagnostic(e.target.value)} placeholder="Ex: Paludisme simple" /></div>
                         </div>
                         
                         {/* ZONE DE PRESCRIPTION MIXTE */}
@@ -1075,7 +1164,7 @@ const ClinicDashboard: React.FC = () => {
 
                           {/* RÉSULTATS DE RECHERCHE */}
                           <div className="bg-white rounded-xl border border-slate-200 p-2 mb-4 max-h-32 overflow-y-auto shadow-inner">
-                            {docSubTab === 'ordonnance' && medicaments.filter(m => m.nom.toLowerCase().includes(searchMedecin.toLowerCase())).map(med => {
+                            {docSubTab === 'ordonnance' && medicaments.filter(m => m.nom.toLowerCase().includes(searchMedecin.toLowerCase()) || m.codeBarre.includes(searchMedecin)).map(med => {
                               const isSelected = ordonnance.some(m => m.medicament.id === med.id);
                               return (
                                 <div key={med.id} onClick={() => handleToggleOrdonnance(med)} className={`p-3 rounded-lg cursor-pointer flex justify-between items-center transition-colors ${isSelected ? 'bg-blue-100 text-blue-900 font-bold' : 'hover:bg-slate-50 text-slate-700'}`}>
@@ -1147,7 +1236,7 @@ const ClinicDashboard: React.FC = () => {
                   {patients.filter(p => p.statut === 'Pharmacie' && p.dateArrivee === new Date().toLocaleDateString()).map(patient => (
                     <div key={patient.id} onClick={() => {
                         setSelectedPatientPharmacie(patient);
-                        setPanierExamens(patient.examens || []); // Charge les examens à payer
+                        setPanierExamens(patient.examens || []); 
                       }} className={`p-4 rounded-xl cursor-pointer border mb-2 transition-all ${selectedPatientPharmacie?.id === patient.id ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-slate-200 hover:bg-slate-50'}`}>
                       <span className="font-bold block text-blue-950">{patient.nom}</span>
                       <div className="flex flex-wrap gap-1 mt-1">
@@ -1156,7 +1245,7 @@ const ClinicDashboard: React.FC = () => {
                       </div>
                     </div>
                   ))}
-                  {patients.filter(p => p.statut === 'Pharmacie').length === 0 && <p className="text-sm text-slate-400 italic">Aucun patient à facturer.</p>}
+                  {patients.filter(p => p.statut === 'Pharmacie' && p.dateArrivee === new Date().toLocaleDateString()).length === 0 && <p className="text-sm text-slate-400 italic">Aucun patient à facturer.</p>}
                 </div>
 
                 <div className="lg:col-span-1 bg-white border border-slate-200 rounded-2xl p-4 md:p-6 shadow-sm flex flex-col overflow-y-auto w-full">
@@ -1253,7 +1342,7 @@ const ClinicDashboard: React.FC = () => {
                     </button>
                   </div>
 
-                  {/* APERÇU DU REÇU CAISSE */}
+                  {/* APERÇU DU REÇU CAISSE EN POP-UP */}
                   {recuApercu && (
                     <div className="absolute inset-0 bg-blue-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                       <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center max-w-sm w-full border border-blue-200">
