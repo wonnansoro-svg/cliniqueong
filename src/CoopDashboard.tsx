@@ -745,7 +745,7 @@ const ClinicDashboard: React.FC = () => {
             <button type="submit" className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 transition-colors"><Lock size={18} /> Connexion</button>
           </form>
           <div className="mt-6 p-4 bg-blue-50 rounded-xl text-xs text-blue-800 border border-blue-100 text-center">
-            <strong>Tests Locaux (Mdp: 1234) :</strong> admin, medecin, infirmier, caisse, accueil, <strong>president</strong>, <strong>superviseur</strong>
+            <strong>Personnel</strong> admin, medecin, infirmier, caisse, accueil, <strong>president</strong>, <strong>superviseur</strong>
           </div>
         </div>
       </div>
